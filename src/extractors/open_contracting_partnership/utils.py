@@ -26,16 +26,25 @@ def parse_ocds_date(date_string: str) -> Optional[datetime]:
     if not date_string:
         return None
 
+    import re
+
+    # Fix Italy's malformed dates: "2025-08-28 16:32:05.724T12:00:00Z"
+    # Pattern has space instead of T, and weird .###T##:##:## duplicate time
+    if ' ' in date_string and 'T' in date_string:
+        # Replace space with T and remove duplicate time after milliseconds
+        # "2025-08-28 16:32:05.724T12:00:00Z" -> "2025-08-28T16:32:05.724"
+        date_string = re.sub(r' (\d{2}:\d{2}:\d{2}\.\d+)T\d{2}:\d{2}:\d{2}', r'T\1', date_string)
+
     # Remove timezone info for simpler parsing
     # Handle patterns like +01:00, +00:00, -05:00, Z
-    import re
     clean_date = re.sub(r'[+-]\d{2}:\d{2}$', '', date_string)
     clean_date = clean_date.replace('Z', '')
 
     # Common OCDS date formats
     formats = [
-        "%Y-%m-%dT%H:%M:%S",    # 2025-01-15T10:30:00
-        "%Y-%m-%d",             # 2025-01-15
+        "%Y-%m-%dT%H:%M:%S.%f",  # 2025-01-15T10:30:00.123
+        "%Y-%m-%dT%H:%M:%S",     # 2025-01-15T10:30:00
+        "%Y-%m-%d",              # 2025-01-15
     ]
 
     for fmt in formats:
