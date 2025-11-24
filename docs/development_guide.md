@@ -61,7 +61,7 @@
 
 ---
 
-## Phase 2: Multi-Source + Deduplication (2 weeks)
+## Phase 2: Multi-Source + Deduplication
 
 ### Add More Sources
 ```bash
