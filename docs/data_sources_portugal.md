@@ -35,32 +35,45 @@ Technical Considerations
 - Main portal (https://compraspt.com/home/)
 - English version (https://compraspt.com/home/en/home-en/)
 - +Concursos Públicos service (https://compraspt.com/home/produto/mais-concursos-publicos-1-ano/)
+- Entity-specific dashboards: `https://www.compraspt.com/cpt-[entity]/faces/app/dashboard.jsp`
 - One of five licensed electronic public procurement platforms in Portugal
 
 **Details**
 
-Commercial Platform
-- No public API available
-- WordPress-based platform (v6.4.3) with WooCommerce
-- Elementor page builder with jQuery/JavaScript frontend
+Dual Architecture Platform
+- Main site: WordPress-based (v6.4.3) with WooCommerce - marketing/commercial
+- Procurement platform: Java-based (JSF/JSP) - entity-specific instances
+- No public API documented
 - Service filters and identifies tenders from all Portuguese e-procurement platforms
 
-Access Levels
-- Public: Service descriptions, contact info, general information
-- Login required: Tender listings, buyer/seller platforms, bid submissions
-- Platform URLs follow pattern: `https://www.compraspt.com/cpt-[entity]/faces/`
+Public Data Access (Entity Dashboards)
+- ✔ Basic statistics visible: number of procedures and notices per entity
+- ✔ Recent procedure titles and publication dates
+- ✔ "See all" links to view more procedures
+- ✔ Some entities allow document downloads (including XML exports)
+- ⚠ Level of public access varies by entity configuration
+- ⚠ Most detailed information requires authentication (digital certificate or credentials)
+
+Entity Dashboard Pattern
+- URLs: `https://www.compraspt.com/cpt-[entity]/faces/`
+- Example: `https://www.compraspt.com/cpt-tconstitucional/faces/app/dashboard.jsp`
+- Each entity (public organization) has separate dashboard instance
+- Public contact info: +351 707 201 562
 
 Scraping Possibilities
-- ✔ Public pages can be scraped (service info, contacts)
-- ✘ Tender data requires login authentication
-- ✘ WordPress/WooCommerce structure with AJAX endpoints
-- ⚠ Most procurement data behind authentication
+- ✔ Entity dashboards show basic procedure information publicly
+- ✔ Procedure titles, dates, and reference numbers accessible
+- ✔ Some entities provide document downloads (PDF, XML)
+- ⚠ Full tender details require authentication
+- ⚠ Data availability inconsistent across entities
+- 🟧 Medium difficulty - requires mapping all entity instances
 
 Technical Considerations
-- WordPress REST API endpoints available (`/wp-json/`)
-- Internal AJAX endpoints (`/wp-admin/admin-ajax.php`)
-- Session-based authentication required for tender access
-- Entity-specific subdomains (cpt-[entity])
+- Java-based procurement platform (JSF/JSP stack)
+- Entity-specific instances require individual mapping
+- Search functionality exists but limited without authentication
+- XML exports available on some entity dashboards
+- Session management with authentication barriers for detailed data
 
 ## Vortal Gov
 **https://www.vortal.biz/pt-pt/vortal-gov/**
@@ -146,11 +159,11 @@ Technical Considerations
 | Platform | API | Open Data | Public Data | Scraping Difficulty | Notes |
 |----------|-----|-----------|-------------|-------------------|-------|
 | BASE | ✔ Restricted* | ✔ OCDS | ✔ Full | 🟢 Easy** | Main state portal. OCDS open data available |
-| ComprasPT | ❌ | ❌ | ✔ Minimal | 🟥 Hard | Service platform. Tender data requires login |
+| ComprasPT | ❌ | ⚠ XML*** | ✔ Partial | 🟧 Medium | Entity dashboards. Basic info + some XML exports |
 | Vortal Gov | ❌ | ❌ | ✘ | 🟥 Very Hard | Institutional only. Not suitable for extraction |
 | AcinGov | ❌ | ❌ | ✔ Partial | 🟧 Medium | Municipal platform. Public listings available |
 
-*Requires IMPIC authorization | **Use dados.gov.pt Open Data Portal instead of scraping
+*Requires IMPIC authorization | **Use dados.gov.pt Open Data Portal instead of scraping | ***XML exports vary by entity
 
 ## Recommendations
 
@@ -163,11 +176,14 @@ Technical Considerations
 - ✅ Official government source (IMPIC)
 - ✅ Regular updates
 
-### Priority 2: BASE Portal Direct API (Optional)
-**If bulk extraction needed**
-- Requires IMPIC authorization request
-- Use only if Open Data Portal is insufficient
-- Approval process via BASE help system
+### Priority 2: ComprasPT Entity Dashboards (Supplementary)
+**For additional procedure details**
+- ⚠ Requires mapping entity instances (cpt-[entity])
+- ✔ Basic procedure information publicly available
+- ✔ Some entities provide XML exports
+- ✔ May contain data not yet in BASE
+- ⚠ Inconsistent data availability across entities
+- Consider as supplement to BASE data
 
 ### Priority 3: AcinGov (Supplementary)
 **Municipal level data**
@@ -176,8 +192,13 @@ Technical Considerations
 - 26,912+ active procedures
 - May require mapping municipal instances
 
+### Priority 4: BASE Portal Direct API (Optional)
+**If bulk extraction needed**
+- Requires IMPIC authorization request
+- Use only if Open Data Portal is insufficient
+- Approval process via BASE help system
+
 ### Not Recommended
-- **ComprasPT**: Tender data requires authentication, limited value
 - **Vortal Gov**: Institutional access only, not suitable for extraction
 
 ## Legal Considerations
@@ -212,6 +233,8 @@ Technical Considerations
 ### ComprasPT
 - [ComprasPT Home](https://compraspt.com/home/)
 - [+Concursos Públicos Service](https://compraspt.com/home/produto/mais-concursos-publicos-1-ano/)
+- [Entity Dashboard Example - Tribunal Constitucional](https://www.compraspt.com/cpt-tconstitucional/faces/app/dashboard.jsp)
+- Support: +351 707 201 562
 
 ### Vortal Gov
 - [Vortal Gov (PT)](https://www.vortal.biz/pt-pt/vortal-gov/)
@@ -249,6 +272,27 @@ Strategy:
 - Official data source
 - API documented and maintained
 
+### Supplementary: ComprasPT Entity Dashboards
+
+```python
+# For additional procedure details and XML exports
+Strategy:
+1. Map all entity instances (cpt-[entity])
+   - Scrape/identify all entity codes
+2. For each entity dashboard:
+   - Extract basic procedure info (titles, dates, numbers)
+   - Check for XML export availability
+   - Download available documents
+3. Parse XML when available
+4. Store as supplementary source
+5. Deduplicate with BASE data
+```
+
+**Challenges:**
+- Need to discover all entity codes
+- Inconsistent data availability
+- Some entities may require authentication for full access
+
 ### Supplementary: AcinGov Extraction
 
 ```python
@@ -267,18 +311,20 @@ Strategy:
 ┌─────────────────────────────────────────────────────────┐
 │ BRONZE LAYER (Raw Data)                                 │
 ├─────────────────────────────────────────────────────────┤
-│ • BASE OCDS JSON (from dados.gov.pt API)                │
+│ • BASE OCDS JSON (from dados.gov.pt API) - PRIMARY     │
+│ • ComprasPT XML/HTML (optional supplement)              │
 │ • AcinGov HTML (optional supplement)                    │
-│ • Store as-is with timestamp                            │
+│ • Store as-is with timestamp + source tag               │
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
 │ SILVER LAYER (Processed)                                │
 ├─────────────────────────────────────────────────────────┤
 │ • Parse OCDS to internal schema                         │
+│ • Parse ComprasPT XML when available                    │
 │ • Extract entities, dates, values                       │
-│ • Normalize formats                                     │
-│ • Deduplicate across sources                            │
+│ • Normalize formats across sources                      │
+│ • Deduplicate with conflict resolution (BASE priority)  │
 └─────────────────────────────────────────────────────────┘
                           ↓
 ┌─────────────────────────────────────────────────────────┐
