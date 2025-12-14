@@ -5,46 +5,48 @@ VENV = venv
 PYTHON = $(VENV)/bin/python
 PIP = $(VENV)/bin/pip
 
-.PHONY: help install setup up down restart logs extract extract-all extract-interactive process process-all process-interactive stats validate dremio-setup dremio-status dremio-query rebuild clean
+.PHONY: help install up down restart logs extract extract-all extract-interactive process process-all process-interactive stats validate dremio-setup dremio-status rebuild clean
 
 help:
 	@echo "E-Procurement System - Docker Commands"
 	@echo "======================================="
 	@echo ""
-	@echo "Setup (First Time):"
-	@echo "  make install             - Create virtual environment and install dependencies"
-	@echo "  make setup               - Complete setup (install + start services)"
+	@echo "Quick Start:"
+	@echo "  make up                  - Setup and start all services (auto-installs if needed)"
+	@echo "  make extract             - Extract data from all sources"
+	@echo "  make process             - Process all extracted data"
+	@echo ""
+	@echo "Setup:"
+	@echo "  make install             - Install dependencies only (advanced)"
 	@echo ""
 	@echo "Infrastructure:"
-	@echo "  make up                  - Start all Docker services (MinIO, Dremio)"
 	@echo "  make down                - Stop all Docker services"
 	@echo "  make restart             - Restart all Docker services"
 	@echo "  make rebuild             - Rebuild and restart containers"
 	@echo "  make logs                - View all service logs (follow mode)"
 	@echo ""
 	@echo "Data Extraction (Bronze Layer):"
-	@echo "  make extract-all         - Extract all publications (automated)"
-	@echo "  make extract-interactive - Interactive extraction menu"
+	@echo "  make extract-all         - Extract from ALL sources (auto-detects)"
+	@echo "  make extract-interactive - Interactive menu to select one source"
 	@echo "  make extract             - Alias for extract-all"
 	@echo ""
 	@echo "Data Processing (Silver Layer):"
-	@echo "  make process-all         - Process all countries (automated)"
-	@echo "  make process-interactive - Interactive processing menu"
+	@echo "  make process-all         - Process ALL sources (auto-detects)"
+	@echo "  make process-interactive - Interactive menu to select one source"
 	@echo "  make process             - Alias for process-all"
 	@echo ""
 	@echo "Utilities:"
-	@echo "  make stats               - Show Silver layer statistics"
-	@echo "  make validate            - Validate Bronze layer structure"
+	@echo "  make stats               - Show statistics for all sources"
+	@echo "  make validate            - Validate data structure for all sources"
 	@echo ""
 	@echo "Dremio (SQL Analytics):"
-	@echo "  make dremio-setup        - Configure Dremio to connect to MinIO"
+	@echo "  make dremio-setup        - Configure Dremio connection"
 	@echo "  make dremio-status       - Check Dremio status"
-	@echo "  make dremio-query        - Run test SQL query"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean               - Remove all containers and volumes (destructive!)"
 	@echo ""
-	@echo "Services will be available at:"
+	@echo "Services available at:"
 	@echo "  - MinIO Console: http://localhost:9001 (minioadmin/minioadmin)"
 	@echo "  - Dremio UI:     http://localhost:9047"
 	@echo ""
@@ -58,21 +60,14 @@ install:
 	@echo ""
 	@echo "✓ Virtual environment created and dependencies installed"
 	@echo ""
-	@echo "Next steps:"
-	@echo "  - Run 'make up' to start Docker services"
-	@echo "  - Run 'make extract' to extract data"
-
-setup: install up
-	@echo ""
-	@echo "✓ Complete setup finished!"
-	@echo ""
-	@echo "Services running:"
-	@echo "  - MinIO Console: http://localhost:9001"
-	@echo "  - Dremio UI:     http://localhost:9047"
-	@echo ""
-	@echo "Next: Run 'make extract' to extract data"
 
 up:
+	@if [ ! -d "$(VENV)" ]; then \
+		echo "Virtual environment not found. Running install..."; \
+		echo ""; \
+		$(MAKE) install; \
+		echo ""; \
+	fi
 	@echo "Starting all Docker services..."
 	cd infra && docker compose up -d
 	@echo ""
@@ -81,12 +76,13 @@ up:
 	@echo "Waiting for services to be ready..."
 	@sleep 8
 	@echo ""
-	@echo "✓ Services should be ready!"
+	@echo "✓ Services ready!"
 	@echo ""
 	@echo "Access points:"
 	@echo "  - MinIO Console: http://localhost:9001"
 	@echo "  - Dremio UI:     http://localhost:9047"
 	@echo ""
+	@echo "Next: Run 'make extract' to extract data"
 	@echo "Run 'make logs' to view logs"
 
 down:
@@ -111,33 +107,121 @@ logs:
 
 # Extraction targets
 extract-all:
-	@echo "Extracting all publications (year 2025)..."
+	@echo "Extracting from all sources..."
 	@echo "This will extract data to local data/bronze/ directory"
 	@echo ""
-	$(PYTHON) -m src.extractors.open_contracting_partnership.main --all
-	@echo ""
-	@echo "✓ Extraction complete!"
+	@found=0; \
+	for dir in src/extractors/*/; do \
+		extractor=$$(basename $$dir); \
+		if [ "$$extractor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "→ Running $$extractor extractor..."; \
+			$(PYTHON) -m src.extractors.$$extractor.main --all || echo "  ✗ $$extractor failed (continuing...)"; \
+			echo ""; \
+			found=$$((found + 1)); \
+		fi \
+	done; \
+	if [ $$found -eq 0 ]; then \
+		echo "No extractors found!"; \
+		exit 1; \
+	fi
+	@echo "✓ All extractions complete!"
 
 extract-interactive:
-	@echo "Starting interactive extraction menu..."
-	@echo ""
-	$(PYTHON) -m src.extractors.open_contracting_partnership.main
+	@echo "Available extractors:"; \
+	echo ""; \
+	i=1; \
+	extractors=""; \
+	for dir in src/extractors/*/; do \
+		extractor=$$(basename $$dir); \
+		if [ "$$extractor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "  $$i) $$extractor"; \
+			extractors="$$extractors $$extractor"; \
+			i=$$((i + 1)); \
+		fi \
+	done; \
+	if [ $$i -eq 1 ]; then \
+		echo "No extractors found!"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	read -p "Select extractor (1-$$((i - 1))): " choice; \
+	j=1; \
+	selected=""; \
+	for ext in $$extractors; do \
+		if [ $$j -eq $$choice ]; then \
+			selected=$$ext; \
+			break; \
+		fi; \
+		j=$$((j + 1)); \
+	done; \
+	if [ -z "$$selected" ]; then \
+		echo "Invalid selection!"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Running $$selected extractor..."; \
+	echo ""; \
+	$(PYTHON) -m src.extractors.$$selected.main
 
 extract: extract-all
 
 # Processing targets
 process-all:
-	@echo "Processing all countries..."
+	@echo "Processing all sources..."
 	@echo "This will process Bronze → Silver (local + MinIO)"
 	@echo ""
-	$(PYTHON) -m src.processing.open_contracting_partnership.main --all
-	@echo ""
-	@echo "✓ Processing complete!"
+	@found=0; \
+	for dir in src/processing/*/; do \
+		processor=$$(basename $$dir); \
+		if [ "$$processor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "→ Running $$processor processor..."; \
+			$(PYTHON) -m src.processing.$$processor.main --all || echo "  ✗ $$processor failed (continuing...)"; \
+			echo ""; \
+			found=$$((found + 1)); \
+		fi \
+	done; \
+	if [ $$found -eq 0 ]; then \
+		echo "No processors found!"; \
+		exit 1; \
+	fi
+	@echo "✓ All processing complete!"
 
 process-interactive:
-	@echo "Starting interactive processing menu..."
-	@echo ""
-	$(PYTHON) -m src.processing.open_contracting_partnership.main
+	@echo "Available processors:"; \
+	echo ""; \
+	i=1; \
+	processors=""; \
+	for dir in src/processing/*/; do \
+		processor=$$(basename $$dir); \
+		if [ "$$processor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "  $$i) $$processor"; \
+			processors="$$processors $$processor"; \
+			i=$$((i + 1)); \
+		fi \
+	done; \
+	if [ $$i -eq 1 ]; then \
+		echo "No processors found!"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	read -p "Select processor (1-$$((i - 1))): " choice; \
+	j=1; \
+	selected=""; \
+	for proc in $$processors; do \
+		if [ $$j -eq $$choice ]; then \
+			selected=$$proc; \
+			break; \
+		fi; \
+		j=$$((j + 1)); \
+	done; \
+	if [ -z "$$selected" ]; then \
+		echo "Invalid selection!"; \
+		exit 1; \
+	fi; \
+	echo ""; \
+	echo "Running $$selected processor..."; \
+	echo ""; \
+	$(PYTHON) -m src.processing.$$selected.main
 
 process: process-all
 
@@ -145,12 +229,26 @@ process: process-all
 stats:
 	@echo "Showing Silver layer statistics..."
 	@echo ""
-	$(PYTHON) -m src.processing.open_contracting_partnership.main --stats
+	@for dir in src/processing/*/; do \
+		processor=$$(basename $$dir); \
+		if [ "$$processor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "=== $$processor ==="; \
+			$(PYTHON) -m src.processing.$$processor.main --stats || true; \
+			echo ""; \
+		fi \
+	done
 
 validate:
 	@echo "Validating Bronze layer structure..."
 	@echo ""
-	$(PYTHON) -m src.processing.open_contracting_partnership.main --validate
+	@for dir in src/processing/*/; do \
+		processor=$$(basename $$dir); \
+		if [ "$$processor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "=== $$processor ==="; \
+			$(PYTHON) -m src.processing.$$processor.main --validate || true; \
+			echo ""; \
+		fi \
+	done
 
 # Dremio targets
 dremio-setup:
@@ -177,6 +275,7 @@ dremio-status:
 			echo "Next steps:"; \
 			echo "  1. If this is first time, create admin account at http://localhost:9047"; \
 			echo "  2. Run: make dremio-setup"; \
+			echo "  3. Use SQL Runner in Dremio UI for queries"; \
 		else \
 			echo "Dremio is starting... (wait ~60 seconds)"; \
 			echo "Run 'docker logs sod-dremio' to check progress"; \
@@ -185,15 +284,6 @@ dremio-status:
 		echo "Dremio container is not running"; \
 		echo "Run: make up"; \
 	fi
-
-dremio-query:
-	@echo "Running test SQL query on Dremio..."
-	@echo ""
-	@echo "Query: SELECT source_country, COUNT(*) as total FROM minio.silver.open_contracting_partnership GROUP BY source_country"
-	@echo ""
-	@echo "Note: This requires Dremio to be configured (run 'make dremio-setup' first)"
-	@echo ""
-	@echo "For interactive queries, open http://localhost:9047 and use SQL Runner"
 
 # Cleanup
 clean:

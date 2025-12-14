@@ -3,8 +3,9 @@ Parquet writer for Silver layer output.
 """
 import logging
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Optional, TYPE_CHECKING
 from datetime import datetime
+from io import BytesIO
 
 try:
     import pandas as pd
@@ -19,6 +20,9 @@ except ImportError:
 
 from .config import PARQUET_CONFIG
 from .validators import extract_year_month
+
+if TYPE_CHECKING:
+    from src.storage import MinIOClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +39,17 @@ def check_parquet_dependencies():
 def write_to_parquet(
     records: List[Dict],
     output_dir: str,
-    partition_by_date: bool = True
+    partition_by_date: bool = True,
+    storage_client: Optional['MinIOClient'] = None
 ) -> Dict[str, int]:
     """
     Write records to Parquet files with partitioning.
 
     Args:
         records: List of transformed records
-        output_dir: Base output directory for Silver layer
+        output_dir: Base output directory for Silver layer (used for local fallback)
         partition_by_date: Whether to partition by country/year/month
+        storage_client: Optional MinIOClient for object storage
 
     Returns:
         Dictionary with write statistics
@@ -73,57 +79,101 @@ def write_to_parquet(
         if partition_by_date:
             # Partition by country, year, month
             for (country, year, month), group_df in df.groupby(['source_country', 'year', 'month']):
-                partition_path = Path(output_dir) / country / year / month
-                partition_path.mkdir(parents=True, exist_ok=True)
-
                 # Generate filename with timestamp
                 timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-                filename = partition_path / f"tenders_{timestamp}.parquet"
+                object_path = f"base_portugal/{country}/{year}/{month}/tenders_{timestamp}.parquet"
 
                 # Drop partition columns before writing (they're in the path)
                 write_df = group_df.drop(columns=['year', 'month'])
 
-                # Write to Parquet
+                # Convert to bytes
+                buffer = BytesIO()
                 write_df.to_parquet(
-                    filename,
+                    buffer,
                     engine='pyarrow',
                     compression=PARQUET_CONFIG['compression'],
                     index=False
                 )
+                parquet_bytes = buffer.getvalue()
+
+                # DUAL WRITE: Write to both local and MinIO
+                # 1. Always write to local (backup + compatibility)
+                _write_parquet_local(parquet_bytes, output_dir, country, year, month, timestamp)
+
+                # 2. Also write to MinIO if client available
+                if storage_client:
+                    try:
+                        storage_client.write_parquet('silver', object_path, parquet_bytes)
+                        logger.info(f"Wrote {len(group_df)} records to MinIO: silver/{object_path}")
+                    except Exception as e:
+                        logger.error(f"Failed to write to MinIO: {e}. Local copy still available.")
+
 
                 records_in_partition = len(group_df)
                 stats['files_written'] += 1
                 stats['records_written'] += records_in_partition
                 stats['partitions'][f"{country}/{year}/{month}"] = records_in_partition
-
-                logger.info(f"Wrote {records_in_partition} records to {filename}")
         else:
             # Write all to single file
-            output_path = Path(output_dir)
-            output_path.mkdir(parents=True, exist_ok=True)
-
             timestamp = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
-            filename = output_path / f"tenders_{timestamp}.parquet"
+            object_path = f"base_portugal/tenders_{timestamp}.parquet"
 
             # Drop partition columns
             write_df = df.drop(columns=['year', 'month'], errors='ignore')
 
+            # Convert to bytes
+            buffer = BytesIO()
             write_df.to_parquet(
-                filename,
+                buffer,
                 engine='pyarrow',
                 compression=PARQUET_CONFIG['compression'],
                 index=False
             )
+            parquet_bytes = buffer.getvalue()
+
+            # DUAL WRITE: Write to both local and MinIO
+            # 1. Always write to local (backup + compatibility)
+            output_path = Path(output_dir)
+            output_path.mkdir(parents=True, exist_ok=True)
+            filename = output_path / f"tenders_{timestamp}.parquet"
+            filename.write_bytes(parquet_bytes)
+            logger.info(f"Wrote {len(df)} records to local storage: {filename}")
+
+            # 2. Also write to MinIO if client available
+            if storage_client:
+                try:
+                    storage_client.write_parquet('silver', object_path, parquet_bytes)
+                    logger.info(f"Wrote {len(df)} records to MinIO: silver/{object_path}")
+                except Exception as e:
+                    logger.error(f"Failed to write to MinIO: {e}. Local copy still available.")
 
             stats['files_written'] = 1
             stats['records_written'] = len(df)
-            logger.info(f"Wrote {len(df)} records to {filename}")
 
         return stats
 
     except Exception as e:
         logger.error(f"Error writing to Parquet: {e}", exc_info=True)
         return {'files_written': 0, 'records_written': 0, 'error': str(e)}
+
+
+def _write_parquet_local(parquet_bytes: bytes, output_dir: str, country: str, year: str, month: str, timestamp: str) -> None:
+    """
+    Write Parquet bytes to local filesystem (fallback method).
+
+    Args:
+        parquet_bytes: Parquet file bytes
+        output_dir: Base output directory
+        country: Country code
+        year: Year string
+        month: Month string
+        timestamp: Timestamp string
+    """
+    partition_path = Path(output_dir) / country / year / month
+    partition_path.mkdir(parents=True, exist_ok=True)
+    filename = partition_path / f"tenders_{timestamp}.parquet"
+    filename.write_bytes(parquet_bytes)
+    logger.info(f"Wrote to local storage: {filename}")
 
 
 def read_parquet(parquet_path: str, limit: int = None) -> List[Dict]:
@@ -196,20 +246,27 @@ def get_parquet_stats(silver_dir: str) -> Dict:
             # Extract country from path
             parts = pq_file.parts
             try:
-                # Assuming path: .../silver/open_contracting_partnership/{country}/...
-                country_idx = parts.index('open_contracting_partnership') + 1
-                country = parts[country_idx]
+                # Try to find base_portugal or open_contracting_partnership in path
+                # Assuming path: .../silver/base_portugal/{country}/...
+                source_idx = None
+                for idx, part in enumerate(parts):
+                    if part in ['base_portugal', 'open_contracting_partnership']:
+                        source_idx = idx
+                        break
 
-                if country not in stats['countries']:
-                    stats['countries'][country] = {
-                        'files': 0,
-                        'records': 0,
-                        'size_mb': 0
-                    }
+                if source_idx is not None and source_idx + 1 < len(parts):
+                    country = parts[source_idx + 1]
 
-                stats['countries'][country]['files'] += 1
-                stats['countries'][country]['records'] += num_rows
-                stats['countries'][country]['size_mb'] += file_size_mb
+                    if country not in stats['countries']:
+                        stats['countries'][country] = {
+                            'files': 0,
+                            'records': 0,
+                            'size_mb': 0
+                        }
+
+                    stats['countries'][country]['files'] += 1
+                    stats['countries'][country]['records'] += num_rows
+                    stats['countries'][country]['size_mb'] += file_size_mb
 
             except (ValueError, IndexError):
                 pass

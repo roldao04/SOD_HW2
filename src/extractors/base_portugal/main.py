@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 Interactive menu for BASE Portugal data extraction.
+Supports both interactive and CLI modes.
 """
 import sys
 import json
 import logging
+import argparse
 from pathlib import Path
 
 from .extractor import BasePortugalExtractor
@@ -102,8 +104,8 @@ def extract_portugal(extractor: BasePortugalExtractor, year: int = 2025):
     return results
 
 
-def main():
-    """Main application loop."""
+def run_interactive_mode():
+    """Run interactive menu mode."""
     extractor = BasePortugalExtractor()
 
     while True:
@@ -146,6 +148,76 @@ def main():
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")
             sys.exit(0)
+
+
+def main():
+    """Main application entry point. Supports both CLI and interactive modes."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description='BASE Portugal Data Extractor',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive menu
+  python -m src.extractors.base_portugal.main
+
+  # Extract all data for default year (2025)
+  python -m src.extractors.base_portugal.main --all
+
+  # Extract data for specific year
+  python -m src.extractors.base_portugal.main --all --year 2024
+
+  # Extract data for year range
+  python -m src.extractors.base_portugal.main --all --year 2023 --year 2024 --year 2025
+        """
+    )
+
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Extract all Portugal data (default year: 2025)'
+    )
+
+    parser.add_argument(
+        '--year',
+        type=int,
+        action='append',
+        metavar='YEAR',
+        help='Year(s) to extract (can be specified multiple times, e.g., --year 2024 --year 2025)'
+    )
+
+    args = parser.parse_args()
+
+    # Determine mode: CLI or interactive
+    if args.all:
+        # CLI mode - non-interactive
+        extractor = BasePortugalExtractor()
+
+        # Determine years to extract
+        years = args.year if args.year else [2025]
+
+        try:
+            for year in years:
+                print(f"\n{'='*60}")
+                print(f" Extracting Portugal data for year: {year}")
+                print("="*60)
+                results = extract_portugal(extractor, year)
+
+                if results.get('successful_publications', 0) == 0:
+                    logger.error(f"No successful extractions for year {year}")
+                    sys.exit(1)
+
+            print("\n✓ All extractions completed successfully!")
+            sys.exit(0)
+
+        except Exception as e:
+            logger.error(f"Extraction failed: {e}", exc_info=True)
+            print(f"\nError: {e}")
+            sys.exit(1)
+
+    else:
+        # Interactive mode
+        run_interactive_mode()
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # 🚀 Quickstart: BASE Portugal Extractor
 
-Guia rápido para testar a extração de dados de Portugal.
+Guia rápido para testar a extração de dados de Portugal com integração MinIO/Dremio.
 
 ---
 
@@ -10,15 +10,13 @@ Guia rápido para testar a extração de dados de Portugal.
 
 ```bash
 # Navegar para o diretório do projeto
-cd /home/ugo/Desktop/UA/4ano/1semestre/SOD/HW2/SOD_HW2
+cd /home/roldao/Desktop/MEI/SOD/hw2
 
-# Criar e ativar virtual environment
-python3 -m venv venv
-source venv/bin/activate
+# Criar e ativar virtual environment + instalar dependências
+make install
 
-# Instalar dependências
-pip install -r requirements.txt
-pip install openpyxl
+# Iniciar serviços Docker (MinIO + Dremio)
+make up
 ```
 
 ### 2. Testar Conexão API
@@ -34,20 +32,34 @@ python3 src/test_portugal_extractor.py
 
 ## 📥 Extração de Dados
 
-### Opção A: CLI Interativa (Recomendado)
+### 🌟 Opção A: Makefile (Recomendado - Novo!)
+
+```bash
+# Extração automatizada (CLI mode)
+make extract-portugal
+
+# OU: Extração interativa
+make extract-portugal-interactive
+```
+
+✅ Vantagens:
+- Comando simples e consistente
+- Sem necessidade de ativar venv manualmente
+- Integrado com o workflow geral do projeto
+
+### Opção B: CLI Direta
 
 ```bash
 source venv/bin/activate
+
+# Modo automatizado
+python3 -m src.extractors.base_portugal.main --all
+
+# OU: Modo interativo
 python3 -m src.extractors.base_portugal.main
 ```
 
-1. Menu aparece
-2. Digite `1` para extrair
-3. Digite `2025` para o ano
-4. Aguarde ~2 minutos
-5. ✓ Dados salvos em `data/bronze/base_portugal/`
-
-### Opção B: Script Python
+### Opção C: Script Python
 
 ```bash
 source venv/bin/activate
@@ -64,31 +76,56 @@ EOF
 
 ---
 
-## 🔄 Processar para Silver Layer
+## 🔄 Processar para Silver Layer (com MinIO!)
 
-### Opção A: CLI Interativa
+### 🌟 Opção A: Makefile (Recomendado - Novo!)
+
+```bash
+# Processamento automatizado (CLI mode)
+# ✅ Escreve em local + MinIO automaticamente
+make process-portugal
+
+# OU: Processamento interativo
+make process-portugal-interactive
+```
+
+✅ **NOVO**: Dual-write automático!
+- ✅ Escreve em `data/silver/base_portugal/` (local)
+- ✅ Escreve em MinIO bucket `silver/base_portugal/` (objeto storage)
+- ✅ Dremio pode aceder aos dados imediatamente
+
+### Opção B: CLI Direta
 
 ```bash
 source venv/bin/activate
+
+# Modo automatizado (com MinIO)
+python3 -m src.processing.base_portugal.main --all
+
+# OU: Modo interativo
 python3 -m src.processing.base_portugal.main
 ```
 
-1. Menu aparece
-2. Digite `1` para processar Portugal
-3. Aguarde ~15 segundos
-4. ✓ Parquet criado em `data/silver/base_portugal/`
-
-### Opção B: Script Python
+### Opção C: Script Python
 
 ```bash
 source venv/bin/activate
 python3 << 'EOF'
 from src.processing.base_portugal.transformer import process_bronze_directory
 from src.processing.base_portugal.parquet_writer import write_to_parquet
+from src.storage import MinIOClient, StorageConfig
 
-# Processar
+# Inicializar MinIO client
+storage_client = MinIOClient(StorageConfig.from_env())
+
+# Processar com dual-write (local + MinIO)
 records = process_bronze_directory('data/bronze/base_portugal', 'portugal')
-stats = write_to_parquet(records, 'data/silver/base_portugal', partition_by_date=True)
+stats = write_to_parquet(
+    records,
+    'data/silver/base_portugal',
+    partition_by_date=True,
+    storage_client=storage_client  # ← Dual-write habilitado!
+)
 
 print(f"\n✓ Transformados {stats['records_written']:,} registos")
 print(f"✓ Ficheiros criados: {stats['files_written']}")
@@ -137,7 +174,31 @@ EOF
 
 ---
 
-## 🎯 One-Liner Completo
+## 🎯 Pipeline Completo (NOVO!)
+
+### Usando Makefile (Recomendado)
+
+```bash
+# 1️⃣ Iniciar serviços
+make up
+
+# 2️⃣ Extrair dados
+make extract-portugal
+
+# 3️⃣ Processar → Silver (local + MinIO)
+make process-portugal
+
+# 4️⃣ Ver estatísticas
+make stats
+
+# 5️⃣ Configurar Dremio (primeira vez)
+make dremio-setup
+
+# 6️⃣ Abrir Dremio e executar queries SQL!
+# → http://localhost:9047
+```
+
+### Script One-Liner (Alternativo)
 
 Extração + Processamento + Análise numa só execução:
 
@@ -146,6 +207,7 @@ source venv/bin/activate && python3 << 'EOF'
 from src.extractors.base_portugal.extractor import BasePortugalExtractor
 from src.processing.base_portugal.transformer import process_bronze_directory
 from src.processing.base_portugal.parquet_writer import write_to_parquet
+from src.storage import MinIOClient, StorageConfig
 import pandas as pd
 
 print("1️⃣ Extraindo dados...")
@@ -153,9 +215,15 @@ extractor = BasePortugalExtractor()
 result = extractor.extract_all(2025)
 print(f"   ✓ {result['total_records_saved']:,} contratos extraídos")
 
-print("\n2️⃣ Processando para Silver...")
+print("\n2️⃣ Processando para Silver (local + MinIO)...")
+storage_client = MinIOClient(StorageConfig.from_env())
 records = process_bronze_directory('data/bronze/base_portugal', 'portugal')
-stats = write_to_parquet(records, 'data/silver/base_portugal', partition_by_date=True)
+stats = write_to_parquet(
+    records,
+    'data/silver/base_portugal',
+    partition_by_date=True,
+    storage_client=storage_client
+)
 print(f"   ✓ {stats['records_written']:,} registos transformados")
 
 print("\n3️⃣ Análise rápida...")
@@ -169,6 +237,8 @@ EOF
 ---
 
 ## 📁 Verificar Resultados
+
+### Local
 
 ```bash
 # Ver estrutura criada
@@ -184,6 +254,35 @@ cat data/bronze/base_portugal/portugal/2025/01/01/records_*.json | jq '.count'
 # Ver schema do Parquet
 pip install parquet-tools
 parquet-tools schema data/silver/base_portugal/portugal/2025/01/tenders_*.parquet
+```
+
+### MinIO (Novo!)
+
+```bash
+# Abrir MinIO Console
+# → http://localhost:9001
+# Login: minioadmin / minioadmin
+
+# Ou usar MinIO CLI
+docker exec sod-minio mc ls myminio/silver/base_portugal/portugal/
+```
+
+### Dremio (Novo!)
+
+```SQL
+-- Abrir Dremio UI: http://localhost:9047
+-- Executar queries SQL diretamente!
+
+-- Exemplo: Top 10 compradores portugueses
+SELECT
+    buyer_name,
+    COUNT(*) as num_contracts,
+    SUM(tender_value_amount) as total_value
+FROM minio.silver.base_portugal.portugal
+WHERE year = '2025'
+GROUP BY buyer_name
+ORDER BY total_value DESC
+LIMIT 10;
 ```
 
 ---
@@ -232,20 +331,41 @@ Para mais detalhes, consulta:
 
 ---
 
-## ✅ Checklist de Teste
+## ✅ Checklist de Teste (Atualizado)
 
-- [ ] Virtual environment criado e ativado
-- [ ] Dependências instaladas (requests, pandas, pyarrow, openpyxl)
-- [ ] Teste de API executado com sucesso
-- [ ] Extração completada (~2 min, 209k contratos)
+### Setup Inicial
+- [ ] Virtual environment criado (`make install`)
+- [ ] Docker services iniciados (`make up`)
+- [ ] MinIO acessível em http://localhost:9001
+- [ ] Dremio acessível em http://localhost:9047
+
+### Pipeline Bronze Layer
+- [ ] Extração completada (`make extract-portugal`)
 - [ ] Bronze layer criado em `data/bronze/base_portugal/`
-- [ ] Transformação completada (~15 seg)
-- [ ] Silver layer criado em `data/silver/base_portugal/`
+- [ ] ~209k contratos extraídos (~2 min)
+
+### Pipeline Silver Layer
+- [ ] Transformação completada (`make process-portugal`)
+- [ ] ✅ Silver layer LOCAL criado em `data/silver/base_portugal/`
+- [ ] ✅ **NOVO**: Silver layer MinIO criado em `silver/base_portugal/` (verificar console MinIO)
 - [ ] Ficheiro Parquet tem ~11 MB
-- [ ] Análise rápida mostra dados corretos
+- [ ] Dual-write funcionou (local + MinIO)
+
+### Analytics & Querying
+- [ ] Dremio configurado (`make dremio-setup`)
+- [ ] ✅ **NOVO**: Queries SQL funcionam no Dremio
+- [ ] ✅ **NOVO**: Dados acessíveis via `minio.silver.base_portugal`
+- [ ] Estatísticas visíveis (`make stats`)
 
 ---
 
-**Tempo total estimado**: 5-10 minutos (dependendo da velocidade da internet)
+**Tempo total estimado**: 10-15 minutos (incluindo setup Docker)
+
+**Workflow recomendado**:
+1. `make install && make up` (setup inicial)
+2. `make extract-portugal` (extração)
+3. `make process-portugal` (processamento → MinIO)
+4. `make dremio-setup` (configurar Dremio - apenas 1ª vez)
+5. Abrir http://localhost:9047 e executar queries SQL!
 
 **Questões?** Consulta a documentação completa em [docs/portugal_implementation.md](docs/portugal_implementation.md)
