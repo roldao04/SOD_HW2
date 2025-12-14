@@ -5,11 +5,14 @@ import json
 import hashlib
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from pathlib import Path
 
 from .config import COUNTRY_MAPPINGS, DEFAULT_VALUES
 from .validators import clean_record, validate_record, extract_year_month
+
+if TYPE_CHECKING:
+    from src.storage import MinIOClient
 
 logger = logging.getLogger(__name__)
 
@@ -233,39 +236,51 @@ def transform_record(
 def process_bronze_file(
     bronze_file_path: str,
     source_country: str = None,
-    source_publication_id: str = ''
+    source_publication_id: str = '',
+    storage_client: Optional['MinIOClient'] = None,
+    is_s3_path: bool = False
 ) -> List[Dict]:
     """
     Process a single Bronze layer JSON file.
 
     Args:
-        bronze_file_path: Path to Bronze JSON file
+        bronze_file_path: Path to Bronze JSON file (local or S3 object path)
         source_country: Country code (auto-detected from path if not provided)
         source_publication_id: Publication ID
+        storage_client: Optional MinIOClient for reading from object storage
+        is_s3_path: Whether bronze_file_path is an S3 object path
 
     Returns:
         List of transformed records
     """
-    bronze_path = Path(bronze_file_path)
-
-    if not bronze_path.exists():
-        logger.error(f"Bronze file not found: {bronze_file_path}")
-        return []
-
     # Auto-detect country from path if not provided
     if not source_country:
         try:
             # Path format: .../bronze/open_contracting_partnership/{country}/{year}/{month}/{day}/...
-            parts = bronze_path.parts
-            country_idx = parts.index('open_contracting_partnership') + 1
+            # or: open_contracting_partnership/{country}/{year}/{month}/{day}/...
+            if is_s3_path:
+                parts = bronze_file_path.split('/')
+            else:
+                bronze_path = Path(bronze_file_path)
+                parts = bronze_path.parts
+            country_idx = list(parts).index('open_contracting_partnership') + 1
             source_country = parts[country_idx]
         except (ValueError, IndexError):
             logger.error(f"Could not determine country from path: {bronze_file_path}")
             return []
 
     try:
-        with open(bronze_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        # Read data from storage
+        if is_s3_path and storage_client:
+            data = storage_client.read_json('bronze', bronze_file_path)
+        else:
+            # Local file
+            bronze_path = Path(bronze_file_path)
+            if not bronze_path.exists():
+                logger.error(f"Bronze file not found: {bronze_file_path}")
+                return []
+            with open(bronze_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
 
         records = data.get('records', [])
         if not records:
@@ -294,36 +309,69 @@ def process_bronze_file(
         return []
 
 
-def process_bronze_directory(bronze_dir: str, country: str = None) -> List[Dict]:
+def process_bronze_directory(
+    bronze_dir: str,
+    country: str = None,
+    storage_client: Optional['MinIOClient'] = None
+) -> List[Dict]:
     """
     Process all Bronze JSON files in a directory (recursively).
 
     Args:
-        bronze_dir: Path to Bronze directory
+        bronze_dir: Path to Bronze directory (local or ignored if storage_client provided)
         country: Country code to filter (optional)
+        storage_client: Optional MinIOClient for reading from object storage
 
     Returns:
         List of all transformed records
     """
-    bronze_path = Path(bronze_dir)
-
-    if not bronze_path.exists():
-        logger.error(f"Bronze directory not found: {bronze_dir}")
-        return []
-
-    # Find all JSON files
-    if country:
-        pattern = f"{country}/**/records_*.json"
-    else:
-        pattern = "**/records_*.json"
-
-    json_files = list(bronze_path.glob(pattern))
-    logger.info(f"Found {len(json_files)} Bronze files to process")
-
     all_transformed = []
-    for json_file in json_files:
-        transformed = process_bronze_file(str(json_file), country)
-        all_transformed.extend(transformed)
+
+    if storage_client:
+        # Use MinIO storage
+        try:
+            # List all JSON files in Bronze bucket
+            if country:
+                prefix = f"open_contracting_partnership/{country}/"
+            else:
+                prefix = "open_contracting_partnership/"
+
+            json_files = storage_client.list_objects('bronze', prefix)
+            json_files = [f for f in json_files if f.endswith('.json') and 'records_' in f]
+            logger.info(f"Found {len(json_files)} Bronze files to process from MinIO")
+
+            for json_file in json_files:
+                transformed = process_bronze_file(
+                    json_file,
+                    country,
+                    storage_client=storage_client,
+                    is_s3_path=True
+                )
+                all_transformed.extend(transformed)
+
+        except Exception as e:
+            logger.error(f"Error listing/processing files from MinIO: {e}")
+            return []
+    else:
+        # Use local filesystem
+        bronze_path = Path(bronze_dir)
+
+        if not bronze_path.exists():
+            logger.error(f"Bronze directory not found: {bronze_dir}")
+            return []
+
+        # Find all JSON files
+        if country:
+            pattern = f"{country}/**/records_*.json"
+        else:
+            pattern = "**/records_*.json"
+
+        json_files = list(bronze_path.glob(pattern))
+        logger.info(f"Found {len(json_files)} Bronze files to process from local storage")
+
+        for json_file in json_files:
+            transformed = process_bronze_file(str(json_file), country)
+            all_transformed.extend(transformed)
 
     logger.info(f"Total transformed records: {len(all_transformed)}")
     return all_transformed

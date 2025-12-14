@@ -23,6 +23,7 @@ from .utils import (
     save_records_to_bronze,
     add_license_metadata
 )
+from src.storage import MinIOClient, StorageConfig
 
 # Configure logging
 logging.basicConfig(
@@ -37,15 +38,25 @@ class OCPExtractor:
     Extractor for Open Contracting Partnership data.
     """
 
-    def __init__(self, base_data_dir: str = "/home/roldao/Desktop/MEI/SOD/hw2/data"):
+    def __init__(self, base_data_dir: str = "/home/roldao/Desktop/MEI/SOD/hw2/data", use_minio: bool = True):
         """
         Initialize the extractor.
 
         Args:
-            base_data_dir: Base directory for data storage
+            base_data_dir: Base directory for data storage (fallback for local storage)
+            use_minio: Whether to use MinIO for storage (default: True)
         """
         self.base_data_dir = base_data_dir
         self.session = self._create_session()
+
+        # Initialize storage client
+        self.storage_client: Optional[MinIOClient] = None
+        if use_minio:
+            try:
+                self.storage_client = MinIOClient(StorageConfig.from_env())
+                logger.info("Initialized MinIO storage client")
+            except Exception as e:
+                logger.warning(f"Failed to initialize MinIO client: {e}. Using local storage.")
 
     def _create_session(self) -> requests.Session:
         """
@@ -183,11 +194,13 @@ class OCPExtractor:
             result['records_downloaded'] = len(records)
             logger.info(f"Downloaded {len(records)} records for {year_filter}")
 
-            # Save to Bronze layer
+            # Save to Bronze layer (local only - not MinIO)
+            # Bronze is kept local for fast extraction and as a backup
             total_saved, date_counts = save_records_to_bronze(
                 records,
                 pub_config['country'],
-                self.base_data_dir
+                self.base_data_dir,
+                storage_client=None  # Bronze layer uses local storage only
             )
 
             result['records_saved'] = total_saved

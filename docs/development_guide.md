@@ -110,9 +110,37 @@
 # 14. Daily digest (optional)
 - Scheduled job
 - Email top recommendations
+
+# 15. Vector embeddings for semantic search (optional enhancement)
+- Generate embeddings for tender titles + descriptions
+- Use sentence-transformers or OpenAI embeddings
+- Store in vector database (ChromaDB/Qdrant)
+
+# 16. RAG query endpoint (optional enhancement)
+- POST /query - Natural language questions
+- "Find infrastructure projects in Spain over 2M euros"
+- Vector search → Retrieve from Dremio → LLM summarization
+- LangChain or LlamaIndex integration
+
+# 17. Semantic deduplication (optional enhancement)
+- Find similar tenders via embedding similarity
+- Cosine similarity > 0.9 → potential duplicates
+- LLM validation for duplicate confirmation
+- Show in Gold layer
+
+# 18. Frontend interface (optional enhancement)
+- Chat-based UI (Streamlit or React)
+- Natural language query input
+- Display AI responses + tender cards
+- Interactive filters and results
+
+# 19. LLM integration (optional enhancement)
+- OpenAI GPT-4 or Claude API
+- Query understanding and response generation
+- Summarization of multiple tenders
 ```
 
-**Deliverable:** Intelligent search and personalization
+**Deliverable:** Intelligent search and personalization (+ optional RAG/NLP system)
 
 ---
 
@@ -142,7 +170,7 @@
 ## Architecture (Medallion Pattern)
 
 ```
-DATA SOURCES → EXTRACTORS → BRONZE (raw JSON) 
+DATA SOURCES → EXTRACTORS → BRONZE (raw JSON)
                               ↓
                            SILVER (cleaned Parquet)
                               ↓
@@ -150,7 +178,15 @@ DATA SOURCES → EXTRACTORS → BRONZE (raw JSON)
                               ↓
                            DREMIO (SQL queries)
                               ↓
-                           API → USER
+                    ┌─────────┴─────────┐
+                    ↓                   ↓
+                 API              VECTOR DB + LLM (optional)
+              (REST/CRUD)         (RAG/Semantic Search)
+                    ↓                   ↓
+                    └─────────┬─────────┘
+                              ↓
+                          FRONTEND
+                            (User)
 ```
 
 ---
@@ -175,6 +211,8 @@ DATA SOURCES → EXTRACTORS → BRONZE (raw JSON)
 4. ✅ Dremio querying data lake
 5. ✅ Search API functional
 6. ✅ Clear documentation
+7. ⭐ RAG/NLP query interface working (optional enhancement)
+8. ⭐ Frontend with natural language search (optional enhancement)
 
 ---
 

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """
 Interactive menu for Open Contracting Partnership data extraction.
+Supports both interactive and CLI modes.
 """
 import sys
 import json
 import logging
+import argparse
 from pathlib import Path
 
 from .extractor import OCPExtractor
@@ -119,8 +121,8 @@ def extract_all_publications(extractor: OCPExtractor, year: int = 2025):
     return results
 
 
-def main():
-    """Main application loop."""
+def run_interactive_mode():
+    """Run interactive menu mode."""
     extractor = OCPExtractor()
 
     while True:
@@ -179,6 +181,87 @@ def main():
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")
             sys.exit(0)
+
+
+def main():
+    """Main application entry point. Supports both CLI and interactive modes."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description='Open Contracting Partnership Data Extractor',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive menu
+  python -m src.extractors.open_contracting_partnership.main
+
+  # Extract all publications (year 2025)
+  python -m src.extractors.open_contracting_partnership.main --all
+
+  # Extract specific publication
+  python -m src.extractors.open_contracting_partnership.main --publication 5
+
+  # Extract with specific year
+  python -m src.extractors.open_contracting_partnership.main --all --year 2024
+        """
+    )
+
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Extract all publications'
+    )
+
+    parser.add_argument(
+        '--publication',
+        type=int,
+        metavar='NUM',
+        help='Extract specific publication by number (1-11)'
+    )
+
+    parser.add_argument(
+        '--year',
+        type=int,
+        default=2025,
+        metavar='YEAR',
+        help='Year to extract (default: 2025)'
+    )
+
+    args = parser.parse_args()
+
+    # Determine mode: CLI or interactive
+    if args.all or args.publication:
+        # CLI mode - non-interactive
+        extractor = OCPExtractor()
+
+        try:
+            if args.all:
+                # Extract all publications
+                print(f"Extracting all publications (Year: {args.year})")
+                extract_all_publications(extractor, args.year)
+
+            elif args.publication:
+                # Extract specific publication
+                pub_key, pub_config = get_publication_by_number(args.publication)
+
+                if pub_key and pub_config:
+                    print(f"Extracting publication #{args.publication}: {pub_config['name']} (Year: {args.year})")
+                    extract_single_publication(extractor, pub_key, pub_config, args.year)
+                else:
+                    print(f"Error: Invalid publication number: {args.publication}")
+                    print("Valid range: 1-11")
+                    sys.exit(1)
+
+            # Exit after CLI operation
+            sys.exit(0)
+
+        except Exception as e:
+            logger.error(f"Extraction failed: {e}", exc_info=True)
+            print(f"\nError: {e}")
+            sys.exit(1)
+
+    else:
+        # Interactive mode
+        run_interactive_mode()
 
 
 if __name__ == "__main__":

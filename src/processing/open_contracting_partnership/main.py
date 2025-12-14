@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 """
 Interactive menu for Open Contracting Partnership Silver layer processing.
+Supports both interactive and CLI modes.
 """
 import sys
 import logging
+import argparse
 from pathlib import Path
+from typing import Optional
 
 from .transformer import process_bronze_directory
 from .parquet_writer import write_to_parquet, get_parquet_stats
 from .config import COUNTRY_MAPPINGS
+
+# Import storage client for MinIO
+try:
+    from src.storage import MinIOClient, StorageConfig
+    MINIO_AVAILABLE = True
+except ImportError:
+    MINIO_AVAILABLE = False
+    MinIOClient = None
+    StorageConfig = None
 
 # Configure logging
 logging.basicConfig(
@@ -20,6 +32,26 @@ logger = logging.getLogger(__name__)
 # Default paths
 DEFAULT_BRONZE_DIR = "/home/roldao/Desktop/MEI/SOD/hw2/data/bronze/open_contracting_partnership"
 DEFAULT_SILVER_DIR = "/home/roldao/Desktop/MEI/SOD/hw2/data/silver/open_contracting_partnership"
+
+
+def get_storage_client() -> Optional['MinIOClient']:
+    """
+    Initialize MinIO storage client if available.
+
+    Returns:
+        MinIOClient instance or None if unavailable/disabled
+    """
+    if not MINIO_AVAILABLE:
+        logger.info("MinIO not available - using local storage only")
+        return None
+
+    try:
+        client = MinIOClient(StorageConfig.from_env())
+        logger.info("✓ MinIO client initialized - dual write enabled (local + MinIO)")
+        return client
+    except Exception as e:
+        logger.warning(f"Failed to initialize MinIO: {e}. Using local storage only.")
+        return None
 
 
 def display_menu():
@@ -75,9 +107,15 @@ def process_country(country: str, bronze_dir: str, silver_dir: str):
 
         print(f"✓ Transformed {len(transformed_records)} records")
 
-        # Write to Parquet
+        # Write to Parquet (dual write: local + MinIO)
         print("\nWriting to Silver layer...")
-        stats = write_to_parquet(transformed_records, silver_dir, partition_by_date=True)
+        storage_client = get_storage_client()
+        stats = write_to_parquet(
+            transformed_records,
+            silver_dir,
+            partition_by_date=True,
+            storage_client=storage_client
+        )
 
         # Display results
         print(f"\n{'='*60}")
@@ -98,8 +136,15 @@ def process_country(country: str, bronze_dir: str, silver_dir: str):
         print(f"\n✗ Error: {e}")
 
 
-def process_all_countries(bronze_dir: str, silver_dir: str):
-    """Process all countries."""
+def process_all_countries(bronze_dir: str, silver_dir: str, skip_confirmation: bool = False):
+    """
+    Process all countries.
+
+    Args:
+        bronze_dir: Bronze layer directory
+        silver_dir: Silver layer directory
+        skip_confirmation: Skip confirmation prompt (for CLI/automated mode)
+    """
     print(f"\n{'='*60}")
     print(" Processing ALL Countries")
     print("="*60)
@@ -107,14 +152,19 @@ def process_all_countries(bronze_dir: str, silver_dir: str):
     countries = list(COUNTRY_MAPPINGS.keys())
     print(f"\nCountries to process: {', '.join([c.upper() for c in countries])}")
 
-    confirm = input("\nThis may take a while. Continue? (y/N): ").strip().lower()
-    if confirm != 'y':
-        print("Cancelled.")
-        return
+    # Skip confirmation in CLI/automated mode
+    if not skip_confirmation:
+        confirm = input("\nThis may take a while. Continue? (y/N): ").strip().lower()
+        if confirm != 'y':
+            print("Cancelled.")
+            return
 
     total_records = 0
     total_files = 0
     failed_countries = []
+
+    # Initialize storage client once for all countries
+    storage_client = get_storage_client()
 
     for country in countries:
         print(f"\n\n{'='*60}")
@@ -130,7 +180,12 @@ def process_all_countries(bronze_dir: str, silver_dir: str):
             transformed_records = process_bronze_directory(bronze_dir, country)
 
             if transformed_records:
-                stats = write_to_parquet(transformed_records, silver_dir, partition_by_date=True)
+                stats = write_to_parquet(
+                    transformed_records,
+                    silver_dir,
+                    partition_by_date=True,
+                    storage_client=storage_client
+                )
                 total_records += stats['records_written']
                 total_files += stats['files_written']
                 print(f"✓ {country.upper()}: {stats['records_written']} records written")
@@ -219,8 +274,8 @@ def validate_bronze(bronze_dir: str):
             print(f"  {country.upper()}: No data")
 
 
-def main():
-    """Main application loop."""
+def run_interactive_mode():
+    """Run interactive menu mode."""
     bronze_dir = DEFAULT_BRONZE_DIR
     silver_dir = DEFAULT_SILVER_DIR
 
@@ -277,6 +332,118 @@ def main():
         except (EOFError, KeyboardInterrupt):
             print("\nExiting...")
             sys.exit(0)
+
+
+def main():
+    """Main application entry point. Supports both CLI and interactive modes."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description='Open Contracting Partnership Silver Layer Processor',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Interactive menu
+  python -m src.processing.open_contracting_partnership.main
+
+  # Process all countries
+  python -m src.processing.open_contracting_partnership.main --all
+
+  # Process specific country
+  python -m src.processing.open_contracting_partnership.main --country spain
+
+  # Show statistics
+  python -m src.processing.open_contracting_partnership.main --stats
+
+  # Validate bronze layer
+  python -m src.processing.open_contracting_partnership.main --validate
+        """
+    )
+
+    parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Process all countries'
+    )
+
+    parser.add_argument(
+        '--country',
+        type=str,
+        metavar='NAME',
+        help='Process specific country (e.g., spain, germany, uk)'
+    )
+
+    parser.add_argument(
+        '--stats',
+        action='store_true',
+        help='Show Silver layer statistics'
+    )
+
+    parser.add_argument(
+        '--validate',
+        action='store_true',
+        help='Validate Bronze layer structure'
+    )
+
+    parser.add_argument(
+        '--bronze-dir',
+        type=str,
+        default=DEFAULT_BRONZE_DIR,
+        metavar='PATH',
+        help=f'Bronze layer directory (default: {DEFAULT_BRONZE_DIR})'
+    )
+
+    parser.add_argument(
+        '--silver-dir',
+        type=str,
+        default=DEFAULT_SILVER_DIR,
+        metavar='PATH',
+        help=f'Silver layer directory (default: {DEFAULT_SILVER_DIR})'
+    )
+
+    args = parser.parse_args()
+
+    # Determine mode: CLI or interactive
+    if args.all or args.country or args.stats or args.validate:
+        # CLI mode - non-interactive
+        bronze_dir = args.bronze_dir
+        silver_dir = args.silver_dir
+
+        try:
+            if args.all:
+                # Process all countries (skip confirmation in CLI mode)
+                print("Processing all countries...")
+                process_all_countries(bronze_dir, silver_dir, skip_confirmation=True)
+
+            elif args.country:
+                # Process specific country
+                country = args.country.lower()
+                if country in COUNTRY_MAPPINGS:
+                    print(f"Processing country: {country.upper()}")
+                    process_country(country, bronze_dir, silver_dir)
+                else:
+                    print(f"Error: Invalid country: {country}")
+                    print(f"Valid countries: {', '.join(COUNTRY_MAPPINGS.keys())}")
+                    sys.exit(1)
+
+            elif args.stats:
+                # Show statistics
+                show_statistics(silver_dir)
+
+            elif args.validate:
+                # Validate Bronze layer
+                validate_bronze(bronze_dir)
+
+            # Exit after CLI operation
+            sys.exit(0)
+
+        except Exception as e:
+            logger.error(f"Processing failed: {e}", exc_info=True)
+            print(f"\nError: {e}")
+            sys.exit(1)
+
+    else:
+        # Interactive mode
+        run_interactive_mode()
 
 
 if __name__ == "__main__":
