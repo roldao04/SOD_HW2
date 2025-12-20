@@ -201,18 +201,16 @@ def save_records_to_bronze(
         # Create object path: open_contracting_partnership/{country}/{YYYY}/{MM}/{DD}/records_{timestamp}.json
         object_path = f"open_contracting_partnership/{country}/{pub_date.year:04d}/{pub_date.month:02d}/{pub_date.day:02d}/records_{timestamp}.json"
 
+        # DUAL WRITE: Always write to local storage (for backward compatibility and backup)
+        _save_to_local(data, base_dir, country, pub_date, timestamp)
+
+        # Also write to MinIO if available
         if storage_client:
-            # Use MinIO/S3 storage
             try:
                 storage_client.write_json('bronze', object_path, data)
                 logger.info(f"Saved {len(date_records)} records to MinIO: bronze/{object_path}")
             except Exception as e:
-                logger.error(f"Failed to save to MinIO: {e}. Falling back to local storage.")
-                # Fallback to local storage
-                _save_to_local(data, base_dir, country, pub_date, timestamp)
-        else:
-            # Use local filesystem
-            _save_to_local(data, base_dir, country, pub_date, timestamp)
+                logger.error(f"Failed to save to MinIO: {e}. Local copy still available.")
 
         total_saved += len(date_records)
         date_counts[date_key] = len(date_records)

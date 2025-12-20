@@ -5,7 +5,7 @@ VENV = venv
 PYTHON = $(VENV)/bin/python
 PIP = $(VENV)/bin/pip
 
-.PHONY: help install up down restart logs extract extract-all extract-interactive process process-all process-interactive stats validate dremio-setup dremio-status rebuild clean
+.PHONY: help install up down restart logs extract extract-all extract-interactive extract-incremental process process-all process-interactive process-incremental stats validate quality-report clean-state dremio-setup dremio-status rebuild clean
 
 help:
 	@echo "E-Procurement System - Docker Commands"
@@ -27,17 +27,21 @@ help:
 	@echo ""
 	@echo "Data Extraction (Bronze Layer):"
 	@echo "  make extract-all         - Extract from ALL sources (auto-detects)"
+	@echo "  make extract-incremental - Extract new data only (skips already extracted)"
 	@echo "  make extract-interactive - Interactive menu to select one source"
 	@echo "  make extract             - Alias for extract-all"
 	@echo ""
 	@echo "Data Processing (Silver Layer):"
 	@echo "  make process-all         - Process ALL sources (auto-detects)"
+	@echo "  make process-incremental - Process new Bronze files only (skips already processed)"
 	@echo "  make process-interactive - Interactive menu to select one source"
 	@echo "  make process             - Alias for process-all"
 	@echo ""
 	@echo "Utilities:"
 	@echo "  make stats               - Show statistics for all sources"
 	@echo "  make validate            - Validate data structure for all sources"
+	@echo "  make quality-report      - Show latest quality validation reports"
+	@echo "  make clean-state         - Remove state files (force full re-extraction/processing)"
 	@echo ""
 	@echo "Dremio (SQL Analytics):"
 	@echo "  make dremio-setup        - Configure Dremio connection"
@@ -165,6 +169,27 @@ extract-interactive:
 
 extract: extract-all
 
+# Incremental extraction (NEW)
+extract-incremental:
+	@echo "Extracting NEW data only (incremental mode)..."
+	@echo "This will skip already-extracted publications"
+	@echo ""
+	@found=0; \
+	for dir in src/extractors/*/; do \
+		extractor=$$(basename $$dir); \
+		if [ "$$extractor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "→ Running $$extractor extractor (incremental)..."; \
+			ENABLE_INCREMENTAL=true $(PYTHON) -m src.extractors.$$extractor.main --all || echo "  ✗ $$extractor failed (continuing...)"; \
+			echo ""; \
+			found=$$((found + 1)); \
+		fi \
+	done; \
+	if [ $$found -eq 0 ]; then \
+		echo "No extractors found!"; \
+		exit 1; \
+	fi
+	@echo "✓ All incremental extractions complete!"
+
 # Processing targets
 process-all:
 	@echo "Processing all sources..."
@@ -225,6 +250,27 @@ process-interactive:
 
 process: process-all
 
+# Incremental processing (NEW)
+process-incremental:
+	@echo "Processing NEW Bronze files only (incremental mode)..."
+	@echo "This will skip already-processed files"
+	@echo ""
+	@found=0; \
+	for dir in src/processing/*/; do \
+		processor=$$(basename $$dir); \
+		if [ "$$processor" != "__pycache__" ] && [ -f "$$dir/main.py" ]; then \
+			echo "→ Running $$processor processor (incremental)..."; \
+			ENABLE_INCREMENTAL=true $(PYTHON) -m src.processing.$$processor.main --all || echo "  ✗ $$processor failed (continuing...)"; \
+			echo ""; \
+			found=$$((found + 1)); \
+		fi \
+	done; \
+	if [ $$found -eq 0 ]; then \
+		echo "No processors found!"; \
+		exit 1; \
+	fi
+	@echo "✓ All incremental processing complete!"
+
 # Utility targets
 stats:
 	@echo "Showing Silver layer statistics..."
@@ -249,6 +295,48 @@ validate:
 			echo ""; \
 		fi \
 	done
+
+# Quality reporting (NEW)
+quality-report:
+	@echo "Showing latest quality validation reports..."
+	@echo ""
+	@echo "=== Open Contracting Partnership ==="
+	@if [ -d "data/silver/open_contracting_partnership/quality_reports" ]; then \
+		latest=$$(ls -t data/silver/open_contracting_partnership/quality_reports/*.json 2>/dev/null | head -1); \
+		if [ -n "$$latest" ]; then \
+			echo "Report: $$latest"; \
+			$(PYTHON) -c "import json; report=json.load(open('$$latest')); print(f\"Completeness: {report['completeness_score']:.2%}\"); print(f\"Passed: {report['validation_passed']}, Failed: {report['validation_failed']}\"); print(f\"Warnings: {len(report['summary']['warnings'])}\")"; \
+		else \
+			echo "No reports found"; \
+		fi; \
+	else \
+		echo "No quality reports directory"; \
+	fi
+	@echo ""
+	@echo "=== Base Portugal ==="
+	@if [ -d "data/silver/base_portugal/quality_reports" ]; then \
+		latest=$$(ls -t data/silver/base_portugal/quality_reports/*.json 2>/dev/null | head -1); \
+		if [ -n "$$latest" ]; then \
+			echo "Report: $$latest"; \
+			$(PYTHON) -c "import json; report=json.load(open('$$latest')); print(f\"Completeness: {report['completeness_score']:.2%}\"); print(f\"Passed: {report['validation_passed']}, Failed: {report['validation_failed']}\"); print(f\"Warnings: {len(report['summary']['warnings'])}\")"; \
+		else \
+			echo "No reports found"; \
+		fi; \
+	else \
+		echo "No quality reports directory"; \
+	fi
+
+# Clean state files (NEW)
+clean-state:
+	@echo "Removing state files (this will force full re-extraction/processing)..."
+	@echo ""
+	@read -p "Are you sure? This will remove extraction and processing state files (y/N): " confirm; \
+	if [ "$$confirm" = "y" ] || [ "$$confirm" = "Y" ]; then \
+		find data -name '*_state.json' -delete 2>/dev/null || true; \
+		echo "✓ State files removed"; \
+	else \
+		echo "Cancelled"; \
+	fi
 
 # Dremio targets
 dremio-setup:

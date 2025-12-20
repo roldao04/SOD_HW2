@@ -18,13 +18,56 @@ except ImportError:
     pa = None
     pq = None
 
-from .config import PARQUET_CONFIG
+from .config import PARQUET_CONFIG, SILVER_SCHEMA
 from .validators import extract_year_month
+from src.common import QualityValidator, DeduplicationManager, StateManager
 
 if TYPE_CHECKING:
     from src.storage import MinIOClient
 
 logger = logging.getLogger(__name__)
+
+
+def get_parquet_schema() -> pa.Schema:
+    """
+    Get explicit PyArrow schema for Silver layer parquet files.
+
+    This ensures consistent schema across all parquet files, regardless of
+    data completeness in individual partitions. Without this, PyArrow infers
+    schema from data, causing type inconsistencies (e.g., null vs string).
+
+    Returns:
+        PyArrow schema with all field types explicitly defined
+    """
+    return pa.schema([
+        ('publication_date', pa.string()),
+        ('tender_start_date', pa.string()),
+        ('tender_end_date', pa.string()),
+        ('award_date', pa.string()),
+        ('tender_value_amount', pa.float64()),
+        ('award_amount', pa.float64()),
+        ('tender_value_currency', pa.string()),
+        ('award_currency', pa.string()),
+        ('ocid', pa.string()),
+        ('source_country', pa.string()),
+        ('source_publication_id', pa.string()),
+        ('tender_id', pa.string()),
+        ('tender_title', pa.string()),
+        ('tender_status', pa.string()),
+        ('procurement_method', pa.string()),
+        ('procurement_category', pa.string()),
+        ('buyer_id', pa.string()),
+        ('buyer_name', pa.string()),
+        ('record_hash', pa.string()),
+        ('source_file', pa.string()),
+        ('processing_timestamp', pa.string()),
+        ('supplier_ids', pa.list_(pa.string())),
+        ('supplier_names', pa.list_(pa.string())),
+        ('document_urls', pa.list_(pa.string())),
+        ('num_lots', pa.int64()),
+        ('num_tenderers', pa.int64()),
+        ('num_awards', pa.int64()),
+    ])
 
 
 def check_parquet_dependencies():
@@ -40,16 +83,20 @@ def write_to_parquet(
     records: List[Dict],
     output_dir: str,
     partition_by_date: bool = True,
-    storage_client: Optional['MinIOClient'] = None
+    storage_client: Optional['MinIOClient'] = None,
+    validate_quality: bool = True,
+    enable_deduplication: bool = True
 ) -> Dict[str, int]:
     """
-    Write records to Parquet files with partitioning.
+    Write records to Parquet files with partitioning, validation, and deduplication.
 
     Args:
         records: List of transformed records
         output_dir: Base output directory for Silver layer (used for local fallback)
         partition_by_date: Whether to partition by country/year/month
         storage_client: Optional MinIOClient for object storage
+        validate_quality: Whether to run quality validation
+        enable_deduplication: Whether to filter duplicate records
 
     Returns:
         Dictionary with write statistics
@@ -59,6 +106,62 @@ def write_to_parquet(
     if not records:
         logger.warning("No records to write")
         return {'files_written': 0, 'records_written': 0}
+
+    # Initialize state manager
+    state_manager = StateManager(
+        source_name='base_portugal',
+        base_dir=output_dir,
+        storage_client=storage_client
+    )
+    processing_state = state_manager.load_processing_state()
+
+    # Quality validation
+    quality_report = None
+    if validate_quality:
+        logger.info("Running quality validation...")
+        required_fields = ['ocid', 'publication_date']
+        validator = QualityValidator(
+            schema=SILVER_SCHEMA,
+            required_fields=required_fields
+        )
+        quality_report = validator.validate_records(records, 'base_portugal')
+
+        logger.info(f"Quality validation complete:")
+        logger.info(f"  - Completeness score: {quality_report.completeness_score:.2%}")
+        logger.info(f"  - Passed: {quality_report.validation_passed}, Failed: {quality_report.validation_failed}")
+
+        # Save quality report
+        QualityValidator.save_quality_report(quality_report, output_dir, storage_client)
+
+        # Check if quality meets minimum standards
+        if not quality_report.summary.get('quality_check_passed', True):
+            logger.warning("Quality check failed! Review quality report for details.")
+            for warning in quality_report.summary.get('warnings', []):
+                logger.warning(f"  - {warning}")
+
+    # Deduplication
+    dedup_stats = {'duplicates_skipped': 0, 'new_records': len(records)}
+    if enable_deduplication:
+        logger.info("Running deduplication...")
+        dedup_manager = DeduplicationManager()
+
+        # Filter out records we've already written (based on record_hash)
+        original_count = len(records)
+        records, dedup_stats = dedup_manager.filter_new_records(
+            records,
+            processing_state.record_hashes_written
+        )
+
+        logger.info(f"Deduplication: {dedup_stats['new_records']} new records, {dedup_stats['duplicates_skipped']} duplicates skipped")
+
+        if dedup_stats['new_records'] == 0:
+            logger.info("No new records to write after deduplication")
+            return {
+                'files_written': 0,
+                'records_written': 0,
+                'duplicates_skipped': dedup_stats['duplicates_skipped'],
+                'quality_report': quality_report.to_dict() if quality_report else None
+            }
 
     stats = {'files_written': 0, 'records_written': 0, 'partitions': {}}
 
@@ -86,13 +189,16 @@ def write_to_parquet(
                 # Drop partition columns before writing (they're in the path)
                 write_df = group_df.drop(columns=['year', 'month'])
 
+                # Convert to PyArrow Table with explicit schema
+                # This ensures consistent schema across all parquet files
+                table = pa.Table.from_pandas(write_df, schema=get_parquet_schema())
+
                 # Convert to bytes
                 buffer = BytesIO()
-                write_df.to_parquet(
+                pq.write_table(
+                    table,
                     buffer,
-                    engine='pyarrow',
-                    compression=PARQUET_CONFIG['compression'],
-                    index=False
+                    compression=PARQUET_CONFIG['compression']
                 )
                 parquet_bytes = buffer.getvalue()
 
@@ -121,13 +227,16 @@ def write_to_parquet(
             # Drop partition columns
             write_df = df.drop(columns=['year', 'month'], errors='ignore')
 
+            # Convert to PyArrow Table with explicit schema
+            # This ensures consistent schema across all parquet files
+            table = pa.Table.from_pandas(write_df, schema=get_parquet_schema())
+
             # Convert to bytes
             buffer = BytesIO()
-            write_df.to_parquet(
+            pq.write_table(
+                table,
                 buffer,
-                engine='pyarrow',
-                compression=PARQUET_CONFIG['compression'],
-                index=False
+                compression=PARQUET_CONFIG['compression']
             )
             parquet_bytes = buffer.getvalue()
 
@@ -149,6 +258,21 @@ def write_to_parquet(
 
             stats['files_written'] = 1
             stats['records_written'] = len(df)
+
+        # Update processing state with written record hashes
+        if enable_deduplication:
+            for record in records:
+                record_hash = record.get('record_hash')
+                if record_hash:
+                    processing_state.record_hashes_written.add(record_hash)
+
+        # Save processing state
+        state_manager.save_processing_state(processing_state)
+
+        # Add quality and dedup info to stats
+        stats['duplicates_skipped'] = dedup_stats.get('duplicates_skipped', 0)
+        if quality_report:
+            stats['quality_report'] = quality_report.to_dict()
 
         return stats
 

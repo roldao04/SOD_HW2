@@ -80,26 +80,19 @@ def process_country(country: str, bronze_dir: str, silver_dir: str):
     print(f" Processing: {country.upper()}")
     print("="*60)
 
-    # Check if Bronze directory exists
-    bronze_path = Path(bronze_dir) / country
-    if not bronze_path.exists():
-        print(f"\n✗ Bronze directory not found: {bronze_path}")
-        print("  Make sure you have extracted data for this country first.")
-        return
-
-    # Count files
-    json_files = list(bronze_path.glob("**/records_*.json"))
-    print(f"\nFound {len(json_files)} Bronze files")
-
-    if len(json_files) == 0:
-        print("No data to process.")
-        return
-
-    print("Processing...")
+    print("Checking for Bronze data (MinIO + local)...")
 
     try:
-        # Transform records
-        transformed_records = process_bronze_directory(bronze_dir, country)
+        # Get storage client
+        storage_client = get_storage_client()
+
+        # Transform records (checks both MinIO and local storage)
+        transformed_records = process_bronze_directory(
+            bronze_dir,
+            country,
+            storage_client=storage_client,
+            incremental=True
+        )
 
         if not transformed_records:
             print("\n✗ No records were successfully transformed")
@@ -109,12 +102,13 @@ def process_country(country: str, bronze_dir: str, silver_dir: str):
 
         # Write to Parquet (dual write: local + MinIO)
         print("\nWriting to Silver layer...")
-        storage_client = get_storage_client()
         stats = write_to_parquet(
             transformed_records,
             silver_dir,
             partition_by_date=True,
-            storage_client=storage_client
+            storage_client=storage_client,
+            validate_quality=True,
+            enable_deduplication=True
         )
 
         # Display results
@@ -172,19 +166,22 @@ def process_all_countries(bronze_dir: str, silver_dir: str, skip_confirmation: b
         print("="*60)
 
         try:
-            bronze_path = Path(bronze_dir) / country
-            if not bronze_path.exists():
-                print(f"Skipping {country} - no Bronze data found")
-                continue
-
-            transformed_records = process_bronze_directory(bronze_dir, country)
+            # Try processing - process_bronze_directory will check both MinIO and local storage
+            transformed_records = process_bronze_directory(
+                bronze_dir,
+                country,
+                storage_client=storage_client,
+                incremental=True
+            )
 
             if transformed_records:
                 stats = write_to_parquet(
                     transformed_records,
                     silver_dir,
                     partition_by_date=True,
-                    storage_client=storage_client
+                    storage_client=storage_client,
+                    validate_quality=True,
+                    enable_deduplication=True
                 )
                 total_records += stats['records_written']
                 total_files += stats['files_written']

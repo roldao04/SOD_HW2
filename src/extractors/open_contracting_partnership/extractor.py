@@ -10,6 +10,7 @@ import json
 import logging
 import time
 import gzip
+from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
 import requests
@@ -24,6 +25,7 @@ from .utils import (
     add_license_metadata
 )
 from src.storage import MinIOClient, StorageConfig
+from src.common import StateManager, FileState
 
 # Configure logging
 logging.basicConfig(
@@ -38,16 +40,18 @@ class OCPExtractor:
     Extractor for Open Contracting Partnership data.
     """
 
-    def __init__(self, base_data_dir: str = "/home/roldao/Desktop/MEI/SOD/hw2/data", use_minio: bool = True):
+    def __init__(self, base_data_dir: str = "/home/roldao/Desktop/MEI/SOD/hw2/data", use_minio: bool = True, incremental: bool = True):
         """
         Initialize the extractor.
 
         Args:
             base_data_dir: Base directory for data storage (fallback for local storage)
             use_minio: Whether to use MinIO for storage (default: True)
+            incremental: Whether to use incremental extraction (skip already extracted data)
         """
         self.base_data_dir = base_data_dir
         self.session = self._create_session()
+        self.incremental = incremental
 
         # Initialize storage client
         self.storage_client: Optional[MinIOClient] = None
@@ -57,6 +61,13 @@ class OCPExtractor:
                 logger.info("Initialized MinIO storage client")
             except Exception as e:
                 logger.warning(f"Failed to initialize MinIO client: {e}. Using local storage.")
+
+        # Initialize state manager for incremental extraction
+        self.state_manager = StateManager(
+            source_name='open_contracting_partnership',
+            base_dir=base_data_dir,
+            storage_client=self.storage_client
+        )
 
     def _create_session(self) -> requests.Session:
         """
@@ -174,10 +185,24 @@ class OCPExtractor:
             'success': False,
             'records_downloaded': 0,
             'records_saved': 0,
-            'error': None
+            'error': None,
+            'skipped': False
         }
 
         try:
+            # Load extraction state for incremental processing
+            extraction_state = None
+            if self.incremental:
+                extraction_state = self.state_manager.load_extraction_state()
+
+                # Check if this publication/year combination was already extracted
+                file_key = f"{pub_config['country']}/{pub_config['publication_id']}/{year_filter}"
+                if file_key in extraction_state.extracted_files:
+                    logger.info(f"Skipping {pub_config['name']} - already extracted for {year_filter}")
+                    result['skipped'] = True
+                    result['success'] = True
+                    return result
+
             # Build download URL for the target year
             download_url = self._build_download_url(
                 pub_config['publication_id'],
@@ -194,13 +219,12 @@ class OCPExtractor:
             result['records_downloaded'] = len(records)
             logger.info(f"Downloaded {len(records)} records for {year_filter}")
 
-            # Save to Bronze layer (local only - not MinIO)
-            # Bronze is kept local for fast extraction and as a backup
+            # Save to Bronze layer (DUAL WRITE: MinIO + local backup)
             total_saved, date_counts = save_records_to_bronze(
                 records,
                 pub_config['country'],
                 self.base_data_dir,
-                storage_client=None  # Bronze layer uses local storage only
+                storage_client=self.storage_client  # Enable MinIO write for Bronze
             )
 
             result['records_saved'] = total_saved
@@ -208,6 +232,19 @@ class OCPExtractor:
             result['success'] = True
 
             logger.info(f"Successfully extracted {total_saved} records for {pub_config['name']}")
+
+            # Update extraction state
+            if self.incremental and extraction_state is not None:
+                file_key = f"{pub_config['country']}/{pub_config['publication_id']}/{year_filter}"
+                extraction_state.extracted_files[file_key] = FileState(
+                    timestamp=datetime.utcnow().isoformat() + 'Z',
+                    record_count=total_saved,
+                    md5_hash='',  # URL-based extraction doesn't have file hash
+                    size_bytes=0
+                )
+                extraction_state.total_records += total_saved
+                extraction_state.total_files += len(date_counts)
+                self.state_manager.save_extraction_state(extraction_state)
 
         except Exception as e:
             logger.error(f"Unexpected error extracting {pub_config['name']}: {e}")
@@ -231,6 +268,7 @@ class OCPExtractor:
             'total_publications': len(EUROPEAN_PUBLICATIONS),
             'successful_publications': 0,
             'failed_publications': 0,
+            'skipped_publications': 0,
             'total_records_saved': 0,
             'publication_results': [],
             'start_time': time.time()
@@ -241,7 +279,9 @@ class OCPExtractor:
             pub_result = self._extract_from_publication(pub_key, pub_config, year_filter)
             results['publication_results'].append(pub_result)
 
-            if pub_result['success']:
+            if pub_result.get('skipped'):
+                results['skipped_publications'] += 1
+            elif pub_result['success']:
                 results['successful_publications'] += 1
                 results['total_records_saved'] += pub_result['records_saved']
             else:
@@ -259,6 +299,7 @@ class OCPExtractor:
         logger.info("=" * 80)
         logger.info(f"Total publications: {results['total_publications']}")
         logger.info(f"Successful: {results['successful_publications']}")
+        logger.info(f"Skipped (already extracted): {results['skipped_publications']}")
         logger.info(f"Failed: {results['failed_publications']}")
         logger.info(f"Total records saved: {results['total_records_saved']}")
         logger.info(f"Duration: {results['duration_seconds']:.2f} seconds")

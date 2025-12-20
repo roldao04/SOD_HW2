@@ -10,6 +10,8 @@ from pathlib import Path
 
 from .config import COUNTRY_MAPPINGS, DEFAULT_VALUES
 from .validators import clean_record, validate_record, extract_year_month
+from src.common import StateManager
+from src.storage import MinIOClient
 
 logger = logging.getLogger(__name__)
 
@@ -233,39 +235,51 @@ def transform_record(
 def process_bronze_file(
     bronze_file_path: str,
     source_country: str = None,
-    source_publication_id: str = ''
+    source_publication_id: str = '',
+    storage_client: Optional[MinIOClient] = None,
+    is_s3_path: bool = False
 ) -> List[Dict]:
     """
     Process a single Bronze layer JSON file.
 
     Args:
-        bronze_file_path: Path to Bronze JSON file
+        bronze_file_path: Path to Bronze JSON file (local or S3 object path)
         source_country: Country code (auto-detected from path if not provided)
         source_publication_id: Publication ID
+        storage_client: Optional MinIOClient for reading from object storage
+        is_s3_path: Whether bronze_file_path is an S3 object path
 
     Returns:
         List of transformed records
     """
-    bronze_path = Path(bronze_file_path)
-
-    if not bronze_path.exists():
-        logger.error(f"Bronze file not found: {bronze_file_path}")
-        return []
-
     # Auto-detect country from path if not provided
     if not source_country:
         try:
             # Path format: .../bronze/base_portugal/{country}/{year}/{month}/{day}/...
-            parts = bronze_path.parts
-            base_portugal_idx = parts.index('base_portugal') + 1
-            source_country = parts[base_portugal_idx]
+            # or: base_portugal/{country}/{year}/{month}/{day}/...
+            if is_s3_path:
+                parts = bronze_file_path.split('/')
+            else:
+                bronze_path = Path(bronze_file_path)
+                parts = bronze_path.parts
+            country_idx = list(parts).index('base_portugal') + 1
+            source_country = parts[country_idx]
         except (ValueError, IndexError):
             logger.error(f"Could not determine country from path: {bronze_file_path}")
             return []
 
     try:
-        with open(bronze_file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        # Read data from storage
+        if is_s3_path and storage_client:
+            data = storage_client.read_json('bronze', bronze_file_path)
+        else:
+            # Local file
+            bronze_path = Path(bronze_file_path)
+            if not bronze_path.exists():
+                logger.error(f"Bronze file not found: {bronze_file_path}")
+                return []
+            with open(bronze_file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
 
         records = data.get('records', [])
         if not records:
@@ -294,36 +308,119 @@ def process_bronze_file(
         return []
 
 
-def process_bronze_directory(bronze_dir: str, country: str = None) -> List[Dict]:
+def process_bronze_directory(
+    bronze_dir: str,
+    country: str = None,
+    storage_client: Optional[MinIOClient] = None,
+    incremental: bool = True
+) -> List[Dict]:
     """
     Process all Bronze JSON files in a directory (recursively).
 
     Args:
-        bronze_dir: Path to Bronze directory
+        bronze_dir: Path to Bronze directory (local fallback)
         country: Country code to filter (optional)
+        storage_client: Optional MinIOClient for reading from object storage
+        incremental: Whether to use incremental processing (skip already processed files)
 
     Returns:
         List of all transformed records
     """
-    bronze_path = Path(bronze_dir)
-
-    if not bronze_path.exists():
-        logger.error(f"Bronze directory not found: {bronze_dir}")
-        return []
-
-    # Find all JSON files
-    if country:
-        pattern = f"{country}/**/records_*.json"
-    else:
-        pattern = "**/records_*.json"
-
-    json_files = list(bronze_path.glob(pattern))
-    logger.info(f"Found {len(json_files)} Bronze files to process")
-
     all_transformed = []
-    for json_file in json_files:
-        transformed = process_bronze_file(str(json_file), country)
-        all_transformed.extend(transformed)
 
+    # Initialize state manager for incremental processing
+    state_manager = None
+    processing_state = None
+    if incremental:
+        state_manager = StateManager(
+            source_name='base_portugal',
+            base_dir=bronze_dir,
+            storage_client=storage_client
+        )
+        processing_state = state_manager.load_processing_state()
+        logger.info(f"Loaded processing state: {processing_state.total_files_processed} files already processed")
+
+    # Try MinIO first, fallback to local
+    json_files = []
+    use_s3_path = False
+
+    if storage_client:
+        # Try MinIO storage
+        try:
+            # List all JSON files in Bronze bucket
+            if country:
+                prefix = f"base_portugal/{country}/"
+            else:
+                prefix = "base_portugal/"
+
+            json_files = storage_client.list_objects('bronze', prefix)
+            json_files = [f for f in json_files if f.endswith('.json') and 'records_' in f and not f.endswith('_state.json')]
+            use_s3_path = True
+            logger.info(f"Found {len(json_files)} Bronze files in MinIO")
+
+        except Exception as e:
+            logger.warning(f"Failed to read from MinIO: {e}. Falling back to local storage")
+            storage_client = None  # Disable for this run
+
+    if not json_files:
+        # Fallback to local filesystem
+        bronze_path = Path(bronze_dir) / "base_portugal"
+
+        if not bronze_path.exists():
+            logger.error(f"Bronze directory not found: {bronze_path}")
+            return []
+
+        # Find all JSON files
+        if country:
+            pattern = f"{country}/**/records_*.json"
+        else:
+            pattern = "**/records_*.json"
+
+        json_files = [str(f) for f in bronze_path.glob(pattern)]
+        use_s3_path = False
+        logger.info(f"Found {len(json_files)} Bronze files in local storage")
+
+    # Process files
+    files_processed = 0
+    files_skipped = 0
+
+    for json_file in json_files:
+        # Check if already processed (incremental mode)
+        if incremental and processing_state and state_manager:
+            if state_manager.should_process_file(json_file, processing_state):
+                # Process the file
+                transformed = process_bronze_file(
+                    str(json_file),
+                    country,
+                    storage_client=storage_client,
+                    is_s3_path=use_s3_path
+                )
+                all_transformed.extend(transformed)
+                files_processed += 1
+
+                # Update state
+                processing_state.processed_bronze_files.append(json_file)
+            else:
+                files_skipped += 1
+                logger.debug(f"Skipping already processed file: {json_file}")
+        else:
+            # Process without state tracking
+            transformed = process_bronze_file(
+                str(json_file),
+                country,
+                storage_client=storage_client,
+                is_s3_path=use_s3_path
+            )
+            all_transformed.extend(transformed)
+            files_processed += 1
+
+    logger.info(f"Processed {files_processed} files, skipped {files_skipped} (already processed)")
     logger.info(f"Total transformed records: {len(all_transformed)}")
+
+    # Save processing state (will be completed after writing to Silver)
+    if incremental and processing_state and state_manager:
+        processing_state.total_files_processed += files_processed
+        processing_state.total_records_processed += len(all_transformed)
+        # Don't save yet - will save after Silver write in parquet_writer
+
     return all_transformed

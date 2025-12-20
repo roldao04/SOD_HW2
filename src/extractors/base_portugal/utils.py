@@ -4,10 +4,13 @@ Utility functions for BASE Portugal extractor.
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, TYPE_CHECKING
 import logging
 
 from .config import LICENSE_INFO
+
+if TYPE_CHECKING:
+    from src.storage import MinIOClient
 
 logger = logging.getLogger(__name__)
 
@@ -142,7 +145,8 @@ def add_license_metadata(data: Dict) -> Dict:
 def save_records_to_bronze(
     records: list,
     country: str,
-    base_dir: str
+    base_dir: str,
+    storage_client: Optional['MinIOClient'] = None
 ) -> Tuple[int, Dict[str, int]]:
     """
     Save OCDS records to Bronze layer, organized by publication date.
@@ -150,7 +154,8 @@ def save_records_to_bronze(
     Args:
         records: List of OCDS records
         country: Country code
-        base_dir: Base data directory
+        base_dir: Base data directory (used for local storage fallback)
+        storage_client: Optional MinIOClient for object storage
 
     Returns:
         Tuple of (total_saved, date_counts_dict)
@@ -176,12 +181,7 @@ def save_records_to_bronze(
     # Save records grouped by date
     for date_key, date_records in records_by_date.items():
         pub_date = datetime.strptime(date_key, "%Y-%m-%d")
-        bronze_path = get_bronze_path(base_dir, country, pub_date)
-        ensure_directory(bronze_path)
-
-        # Create filename with timestamp
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        filename = bronze_path / f"records_{timestamp}.json"
 
         # Prepare data with metadata
         data = {
@@ -192,15 +192,46 @@ def save_records_to_bronze(
         }
         data = add_license_metadata(data)
 
-        # Save to file
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        # Create object path: base_portugal/{country}/{YYYY}/{MM}/{DD}/records_{timestamp}.json
+        object_path = f"base_portugal/{country}/{pub_date.year:04d}/{pub_date.month:02d}/{pub_date.day:02d}/records_{timestamp}.json"
+
+        # DUAL WRITE: Always write to local storage (for backward compatibility and backup)
+        _save_to_local(data, base_dir, country, pub_date, timestamp)
+
+        # Also write to MinIO if available
+        if storage_client:
+            try:
+                storage_client.write_json('bronze', object_path, data)
+                logger.info(f"Saved {len(date_records)} records to MinIO: bronze/{object_path}")
+            except Exception as e:
+                logger.error(f"Failed to save to MinIO: {e}. Local copy still available.")
 
         total_saved += len(date_records)
         date_counts[date_key] = len(date_records)
-        logger.info(f"Saved {len(date_records)} records to {filename}")
 
     return total_saved, date_counts
+
+
+def _save_to_local(data: Dict, base_dir: str, country: str, pub_date: datetime, timestamp: str) -> None:
+    """
+    Save data to local filesystem (fallback method).
+
+    Args:
+        data: Data to save
+        base_dir: Base data directory
+        country: Country code
+        pub_date: Publication date
+        timestamp: Timestamp string
+    """
+    bronze_path = get_bronze_path(base_dir, country, pub_date)
+    ensure_directory(bronze_path)
+
+    filename = bronze_path / f"records_{timestamp}.json"
+
+    with open(filename, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+    logger.info(f"Saved {data['count']} records to local storage: {filename}")
 
 
 def filter_records_by_year(records: list, year: int = 2025) -> list:
