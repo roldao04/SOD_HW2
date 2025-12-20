@@ -82,7 +82,7 @@ TED_FIELD_MAPPINGS = {
     'tender_status': 'state',
 
     # Dates
-    'publication_date': ['publication_date', 'closing_date'],  # Fallback to closing_date (82% coverage)
+    'publication_date': ['publication_date', 'contract_date', 'closing_date'],  # Try contract_date before closing_date
     'tender_start_date': 'contract_date',
     'tender_end_date': ['closing_date', 'execution_deadline'],  # Try closing_date first
     'award_date': 'contract_date',

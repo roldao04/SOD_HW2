@@ -242,21 +242,32 @@ class BasePortugalExtractor:
         Convert a single Excel row to OCDS-like format.
 
         Args:
-            row: Dictionary with column names as keys
+            row: Dictionary with column names as keys (camelCase from dados.gov.pt XLSX)
             year: Year of the data
 
         Returns:
             OCDS-like record or None if conversion fails
+
+        Note: Column names from dados.gov.pt XLSX are camelCase:
+            - idcontrato (contract ID)
+            - objectoContrato (tender title)
+            - descContrato (description)
+            - adjudicante (buyer - format: "NIF - Name")
+            - adjudicatarios (suppliers - format: "NIF - Name")
+            - precoContratual (contract price)
+            - dataPublicacao (publication date)
+            - tipoContrato (contract type)
+            - tipoprocedimento (procurement method)
         """
         try:
             # Generate unique OCID from available fields
-            # Use contract ID or combination of fields
-            contract_id = row.get('ID do Contrato') or row.get('ID Contrato') or row.get('Identificador')
+            # Column: idcontrato (camelCase)
+            contract_id = row.get('idcontrato') or row.get('ID do Contrato') or row.get('Identificador')
 
             if not contract_id:
                 # Try to find any ID field
                 for key in row.keys():
-                    if 'ID' in str(key).upper() or 'Identificador' in str(key):
+                    if key and ('idcontrato' in str(key).lower() or 'ID' in str(key).upper()):
                         contract_id = row.get(key)
                         break
 
@@ -265,9 +276,9 @@ class BasePortugalExtractor:
 
             ocid = f"ocds-base-pt-{year}-{contract_id}"
 
-            # Parse dates
+            # Parse dates - Column: dataPublicacao (camelCase)
             pub_date = None
-            for date_field in ['Data Publicação', 'Data de Publicação', 'Data']:
+            for date_field in ['dataPublicacao', 'Data Publicação', 'Data de Publicação', 'Data']:
                 if row.get(date_field):
                     pub_date = self._parse_excel_date(row.get(date_field))
                     if pub_date:
@@ -276,41 +287,82 @@ class BasePortugalExtractor:
             if not pub_date:
                 pub_date = f"{year}-01-01"  # Default to year start
 
+            # Extract buyer info from adjudicante (format: "NIF - Name")
+            buyer_id = ''
+            buyer_name = ''
+            adjudicante = row.get('adjudicante', '') or row.get('Adjudicante', '')
+            if adjudicante and isinstance(adjudicante, str) and ' - ' in adjudicante:
+                parts = adjudicante.split(' - ', 1)
+                buyer_id = parts[0].strip()
+                buyer_name = parts[1].strip() if len(parts) > 1 else ''
+            elif adjudicante:
+                buyer_name = str(adjudicante)
+
             # Build OCDS-like record
             ocds_record = {
                 'ocid': ocid,
                 'date': pub_date,
                 'tender': {
                     'id': str(contract_id),
-                    'title': row.get('Objeto do Contrato') or row.get('Descrição') or '',
-                    'status': row.get('Estado') or 'active',
+                    # Column: objectoContrato (camelCase)
+                    'title': row.get('objectoContrato') or row.get('descContrato') or row.get('Objeto do Contrato') or '',
+                    'status': 'active',  # BASE.gov.pt doesn't have status field
                     'value': {
-                        'amount': self._parse_amount(row.get('Preço Contratual') or row.get('Valor')),
+                        # Column: precoContratual (camelCase)
+                        'amount': self._parse_amount(row.get('precoContratual') or row.get('Preço Contratual') or row.get('Valor')),
                         'currency': 'EUR'
-                    }
+                    },
+                    # Column: tipoContrato (contract type/category)
+                    'procurement_category': row.get('tipoContrato', ''),
+                    # Column: tipoprocedimento (procurement method)
+                    'procurement_method': row.get('tipoprocedimento', '')
                 },
                 'buyer': {
-                    'id': row.get('NIF Adjudicante') or '',
-                    'name': row.get('Adjudicante') or row.get('Entidade Adjudicante') or ''
+                    'id': buyer_id,
+                    'name': buyer_name
                 },
                 'awards': []
             }
 
             # Add award info if available
-            supplier_name = row.get('Adjudicatário') or row.get('Entidade Adjudicatária')
-            if supplier_name:
-                award = {
-                    'date': pub_date,
-                    'value': {
-                        'amount': self._parse_amount(row.get('Preço Contratual') or row.get('Valor')),
-                        'currency': 'EUR'
-                    },
-                    'suppliers': [{
-                        'id': row.get('NIF Adjudicatário') or '',
-                        'name': supplier_name
-                    }]
-                }
-                ocds_record['awards'].append(award)
+            # Column: adjudicatarios (format: "NIF - Name" or multi-supplier list)
+            adjudicatarios = row.get('adjudicatarios', '') or row.get('Adjudicatários', '')
+            if adjudicatarios:
+                suppliers = []
+                # Handle multi-supplier format (can be comma-separated or multiple entries)
+                supplier_entries = str(adjudicatarios).split(';') if ';' in str(adjudicatarios) else [adjudicatarios]
+
+                for supplier_entry in supplier_entries:
+                    supplier_id = ''
+                    supplier_name = ''
+                    if isinstance(supplier_entry, str) and ' - ' in supplier_entry:
+                        parts = supplier_entry.strip().split(' - ', 1)
+                        supplier_id = parts[0].strip()
+                        supplier_name = parts[1].strip() if len(parts) > 1 else ''
+                    else:
+                        supplier_name = str(supplier_entry).strip()
+
+                    if supplier_name:
+                        suppliers.append({
+                            'id': supplier_id,
+                            'name': supplier_name
+                        })
+
+                if suppliers:
+                    award = {
+                        'date': pub_date,
+                        'value': {
+                            # Column: PrecoTotalEfetivo (effective total price) or precoContratual
+                            'amount': self._parse_amount(
+                                row.get('PrecoTotalEfetivo') or
+                                row.get('precoContratual') or
+                                row.get('Preço Contratual')
+                            ),
+                            'currency': 'EUR'
+                        },
+                        'suppliers': suppliers
+                    }
+                    ocds_record['awards'].append(award)
 
             return ocds_record
 

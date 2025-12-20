@@ -46,8 +46,8 @@ COMMON_FIELD_MAPPINGS = {
     'publication_date': ['date'],
     'tender_start_date': ['tender.tenderPeriod.startDate'],
     'tender_end_date': ['tender.tenderPeriod.endDate'],
-    'procurement_method': ['tender.procurementMethod'],
-    'procurement_category': ['tender.mainProcurementCategory'],
+    'procurement_method': ['tender.procurement_method', 'tender.procurementMethod'],
+    'procurement_category': ['tender.procurement_category', 'tender.mainProcurementCategory'],
 }
 
 # Portugal-specific mappings (BASE portal via dados.gov.pt)

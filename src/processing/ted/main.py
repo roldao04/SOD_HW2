@@ -179,7 +179,7 @@ def validate_bronze(bronze_dir: str):
     print(" TED Bronze Layer Validation")
     print("="*60)
 
-    partner_path = Path(bronze_dir) / "partner_data" / "andré"
+    partner_path = Path(bronze_dir) / "partner_data" / "andré&abel"
     if not partner_path.exists():
         print(f"\n✗ TED partner data directory not found: {partner_path}")
         return

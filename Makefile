@@ -5,7 +5,7 @@ VENV = venv
 PYTHON = $(VENV)/bin/python
 PIP = $(VENV)/bin/pip
 
-.PHONY: help install up down restart logs extract extract-all extract-interactive extract-incremental process process-all process-interactive process-incremental stats validate quality-report clean-state dremio-setup dremio-status rebuild clean
+.PHONY: help install up down restart logs extract extract-all extract-interactive extract-incremental process process-all process-interactive process-incremental stats validate quality-report clean-state gold-layer gold-unified gold-aggregates gold-quality gold-stats dremio-setup dremio-status rebuild clean
 
 help:
 	@echo "E-Procurement System - Docker Commands"
@@ -42,6 +42,14 @@ help:
 	@echo "  make validate            - Validate data structure for all sources"
 	@echo "  make quality-report      - Show latest quality validation reports"
 	@echo "  make clean-state         - Remove state files (force full re-extraction/processing)"
+	@echo ""
+	@echo "Gold Layer (Analytics-Ready Data):"
+	@echo "  make gold-layer          - Build complete gold layer (unified + aggregates + quality)"
+	@echo "  make gold-unified        - Create unified dataset only"
+	@echo "  make gold-aggregates     - Generate aggregate tables only"
+	@echo "  make gold-quality        - Generate quality reports only"
+	@echo "  make gold-stats          - Show gold layer statistics"
+	@echo "  make gold-upload         - Upload gold layer to MinIO (for Dremio queries)"
 	@echo ""
 	@echo "Dremio (SQL Analytics):"
 	@echo "  make dremio-setup        - Configure Dremio connection"
@@ -337,6 +345,51 @@ clean-state:
 	else \
 		echo "Cancelled"; \
 	fi
+
+# Gold Layer targets (NEW)
+gold-layer:
+	@echo "Building complete Gold layer (unified + aggregates + quality)..."
+	@echo ""
+	$(PYTHON) -m src.gold_layer.main --all
+	@echo ""
+	@echo "✓ Gold layer build complete!"
+	@echo "  - Unified dataset: data/gold/unified/all_tenders.parquet"
+	@echo "  - Aggregates: data/gold/aggregates/"
+	@echo "  - Quality reports: data/gold/quality/"
+
+gold-unified:
+	@echo "Creating unified Gold dataset..."
+	@echo ""
+	$(PYTHON) -m src.gold_layer.main --unified
+	@echo ""
+	@echo "✓ Unified dataset created: data/gold/unified/all_tenders.parquet"
+
+gold-aggregates:
+	@echo "Generating Gold layer aggregates..."
+	@echo ""
+	$(PYTHON) -m src.gold_layer.main --aggregates
+	@echo ""
+	@echo "✓ Aggregates generated: data/gold/aggregates/"
+
+gold-quality:
+	@echo "Generating Gold layer quality reports..."
+	@echo ""
+	$(PYTHON) -m src.gold_layer.main --quality
+	@echo ""
+	@echo "✓ Quality reports generated: data/gold/quality/"
+
+gold-stats:
+	@echo "Showing Gold layer statistics..."
+	@echo ""
+	$(PYTHON) -m src.gold_layer.main --stats
+
+gold-upload:
+	@echo "Uploading Gold layer to MinIO..."
+	@echo ""
+	$(PYTHON) -m src.gold_layer.upload_to_minio
+	@echo ""
+	@echo "✓ Gold layer uploaded to MinIO"
+	@echo "  Next: Configure Dremio (see docs/dremio_gold_layer_guide.md)"
 
 # Dremio targets
 dremio-setup:

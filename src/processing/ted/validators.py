@@ -29,6 +29,11 @@ def clean_date(date_value: Any) -> Optional[str]:
     if not isinstance(date_value, str):
         return None
 
+    # Skip duration strings (Portuguese format: "30 dias", "365 dias", etc.)
+    # These are not dates, they are durations and should not be parsed as dates
+    if ' dias' in date_value.lower() or ' dia' in date_value.lower():
+        return None
+
     # Fix Italy's malformed dates: "2025-07-14 16:31:02.112T12:00:00Z"
     # Pattern has space instead of T, and weird .###T##:##:## duplicate time
     if ' ' in date_value and 'T' in date_value:

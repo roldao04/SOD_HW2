@@ -53,20 +53,32 @@ def get_value_from_ted_field(record: dict, ted_field: Any) -> Any:
         # Try multiple fields in order
         for field in ted_field:
             value = record.get(field)
-            if value is not None:
+            # Handle both None and pandas NA values
+            if value is not None and not pd.isna(value):
                 return value
         return None
     else:
         # Single field
-        return record.get(ted_field)
+        value = record.get(ted_field)
+        # Return None for pandas NA values
+        if value is not None and pd.isna(value):
+            return None
+        return value
 
 
 def extract_country_code(record: dict) -> str:
     """
-    Extract and normalize country code from TED record.
+    Extract and normalize country code from TED record using 4-tier fallback strategy.
 
-    TED uses ISO 3166-1 alpha-3 codes (DEU, FRA, etc.) which we map
-    to lowercase country names (germany, france, etc.).
+    TED data comes from multiple sources:
+    - EU Tenders (TED): Has ISO 3166-1 alpha-3 codes (DEU, FRA, etc.) in contracting_authorities
+    - BASE.gov.pt: No country code, but has execution_location like "Portugal, City, Region"
+    - Partner Team: Mixed format
+
+    Tier 1: contracting_authorities[0].country (works for EU TED data)
+    Tier 2: execution_location parsing (handles BASE.gov.pt format)
+    Tier 3: Source field mapping (fallback for known sources)
+    Tier 4: Buyer name pattern matching (last resort for Portuguese entities)
 
     Args:
         record: TED record dictionary
@@ -74,23 +86,45 @@ def extract_country_code(record: dict) -> str:
     Returns:
         Normalized country code or 'unknown'
     """
-    # Try contracting_authorities first
+    # Tier 1: Try contracting_authorities country field (EU TED data)
     authorities = record.get('contracting_authorities', [])
-    if authorities and isinstance(authorities, list) and len(authorities) > 0:
-        country_code = authorities[0].get('country')
-        if country_code:
+    # Note: Parquet reads arrays as NumPy arrays, not Python lists
+    if authorities is not None and len(authorities) > 0:
+        # Handle both dict and numpy structured array
+        auth_item = authorities[0]
+        country_code = auth_item.get('country') if isinstance(auth_item, dict) else auth_item['country'] if hasattr(auth_item, '__getitem__') else None
+        if country_code and not pd.isna(country_code):
             # Map ISO alpha-3 to lowercase name
             return COUNTRY_CODE_MAPPING.get(country_code, country_code.lower())
 
-    # Try execution_location as fallback
+    # Tier 2: Try execution_location parsing
+    # Format examples: "Portugal, Aveiro, Espinho" or "Lisboa, Portugal"
     exec_location = record.get('execution_location')
-    if exec_location:
-        # execution_location might be like "PT-11" (Portugal-region)
-        country_part = exec_location.split('-')[0]
-        # Try to map from alpha-2 or alpha-3
-        for code, name in COUNTRY_CODE_MAPPING.items():
-            if code.startswith(country_part) or country_part == code[:2]:
-                return name
+    if exec_location and isinstance(exec_location, str):
+        parts = [p.strip().lower() for p in exec_location.split(',')]
+        if parts:
+            # Check first part (usually country for BASE.gov.pt: "Portugal, City, Region")
+            if parts[0] == 'portugal':
+                return 'portugal'
+            # Check last part (for "City, Country" format)
+            if len(parts) > 1 and parts[-1] == 'portugal':
+                return 'portugal'
+
+    # Tier 3: Source field mapping (known source patterns)
+    source = record.get('source', '')
+    if 'BASE.gov.pt' in source:
+        return 'portugal'
+
+    # Tier 4: Buyer name pattern matching (Portuguese entity detection)
+    buyer_name = ''
+    if authorities and len(authorities) > 0:
+        buyer_name = authorities[0].get('name', '')
+
+    # Portuguese entity patterns (ministries, municipalities, government)
+    portuguese_patterns = ['município', 'câmara', 'junta', 'governo', 'estado-maior',
+                          'ministério', 'secretaria', 'fundação', 'autoridade']
+    if any(pattern in buyer_name.lower() for pattern in portuguese_patterns):
+        return 'portugal'
 
     return 'unknown'
 
@@ -311,6 +345,10 @@ def transform_record(
         # Clean the record
         transformed = clean_record(transformed)
 
+        # Note: Year filter removed to allow historical data for gold layer
+        # All dates (including future dates from closing_date fallback) will be included
+        # Quality flags will be added in gold layer to mark questionable dates
+
         # Compute record hash
         transformed['record_hash'] = compute_record_hash(transformed)
 
@@ -347,7 +385,7 @@ def process_bronze_file(
     try:
         # Read parquet data from storage
         if is_s3_path and storage_client:
-            parquet_bytes = storage_client.read_parquet('bronze', bronze_file_path)
+            parquet_bytes = storage_client.read_bytes('bronze', bronze_file_path)
             from io import BytesIO
             df = pd.read_parquet(BytesIO(parquet_bytes))
         else:
@@ -417,7 +455,7 @@ def process_bronze_directory(
         # Try MinIO storage
         try:
             # List all Parquet files in TED partner data
-            prefix = "partner_data/andré/"
+            prefix = "partner_data/andré&abel/"
 
             parquet_files = storage_client.list_objects('bronze', prefix)
             parquet_files = [f for f in parquet_files if f.endswith('.parquet') and not f.endswith('_state.parquet')]
@@ -430,7 +468,7 @@ def process_bronze_directory(
 
     if not parquet_files:
         # Fallback to local filesystem
-        bronze_path = Path(bronze_dir) / "partner_data" / "andré"
+        bronze_path = Path(bronze_dir) / "partner_data" / "andré&abel"
 
         if not bronze_path.exists():
             logger.error(f"Bronze directory not found: {bronze_path}")
