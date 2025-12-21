@@ -29,9 +29,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Default paths
-DEFAULT_BRONZE_DIR = "/home/roldao/Desktop/MEI/SOD/hw2/data/bronze/open_contracting_partnership"
-DEFAULT_SILVER_DIR = "/home/roldao/Desktop/MEI/SOD/hw2/data/silver/open_contracting_partnership"
+# Default paths - use relative paths from project root
+def get_default_paths():
+    """Get default Bronze and Silver directory paths."""
+    # Get project root (4 levels up from this file)
+    project_root = Path(__file__).parent.parent.parent.parent
+    data_dir = project_root / "data"
+    
+    bronze_dir = str(data_dir / "bronze" / "open_contracting_partnership")
+    silver_dir = str(data_dir / "silver" / "open_contracting_partnership")
+    
+    return bronze_dir, silver_dir
+
+DEFAULT_BRONZE_DIR, DEFAULT_SILVER_DIR = get_default_paths()
 
 
 def get_storage_client() -> Optional['MinIOClient']:

@@ -232,6 +232,12 @@ Examples:
     )
 
     parser.add_argument(
+        '--all',
+        action='store_true',
+        help='Process all available data (default behavior)'
+    )
+
+    parser.add_argument(
         '--stats',
         action='store_true',
         help='Show Silver layer statistics'

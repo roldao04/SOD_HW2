@@ -61,6 +61,12 @@ help:
 	@echo "  make chatbot-rebuild     - Rebuild chatbot container"
 	@echo "  make chatbot-shell       - Open shell in chatbot container"
 	@echo ""
+	@echo "Pipeline Orchestration:"
+	@echo "  make orchestrate         - Run complete pipeline (extract + process + gold)"
+	@echo "  make orchestrate-extract - Run all extractors only"
+	@echo "  make orchestrate-process - Run all processors only"
+	@echo "  make orchestrate-gold    - Run gold layer generation only"
+	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean               - Remove all containers and volumes (destructive!)"
 	@echo ""
@@ -270,6 +276,11 @@ process-interactive:
 
 process: process-all
 
+# Individual source processing
+process-hm:
+	@echo "Processing Henrique & Monteiro partner data..."
+	$(PYTHON) -m src.processing.henrique_monteiro.main
+
 # Incremental processing (NEW)
 process-incremental:
 	@echo "Processing NEW Bronze files only (incremental mode)..."
@@ -437,6 +448,42 @@ dremio-status:
 		echo "Dremio container is not running"; \
 		echo "Run: make up"; \
 	fi
+
+# Orchestration targets
+orchestrate:
+	@echo "Running complete pipeline orchestration..."
+	@echo ""
+	$(PYTHON) -m src.orchestration.scheduler
+	@echo ""
+	@echo "✓ Pipeline orchestration complete"
+
+orchestrate-extract:
+	@echo "Running extractors orchestration..."
+	@echo ""
+	$(PYTHON) -m src.orchestration.scheduler --extract-only
+	@echo ""
+	@echo "✓ Extraction orchestration complete"
+
+orchestrate-process:
+	@echo "Running processors orchestration..."
+	@echo ""
+	$(PYTHON) -m src.orchestration.scheduler --process-only
+	@echo ""
+	@echo "✓ Processing orchestration complete"
+
+orchestrate-gold:
+	@echo "Running gold layer orchestration..."
+	@echo ""
+	$(PYTHON) -m src.orchestration.scheduler --gold-only
+	@echo ""
+	@echo "✓ Gold layer orchestration complete"
+
+orchestrate-sources:
+	@echo "Running orchestration for specific sources: $(SOURCES)..."
+	@echo ""
+	$(PYTHON) -m src.orchestration.scheduler --sources $(SOURCES)
+	@echo ""
+	@echo "✓ Source orchestration complete"
 
 # Cleanup
 clean:
