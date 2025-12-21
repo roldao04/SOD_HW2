@@ -40,15 +40,22 @@ class OCPExtractor:
     Extractor for Open Contracting Partnership data.
     """
 
-    def __init__(self, base_data_dir: str = "/home/roldao/Desktop/MEI/SOD/hw2/data", use_minio: bool = True, incremental: bool = True):
+    def __init__(self, base_data_dir: Optional[str] = None, use_minio: bool = True, incremental: bool = True):
         """
         Initialize the extractor.
 
         Args:
-            base_data_dir: Base directory for data storage (fallback for local storage)
+            base_data_dir: Base directory for data storage (fallback for local storage).
+                          If None, uses relative path from project root: data/
             use_minio: Whether to use MinIO for storage (default: True)
             incremental: Whether to use incremental extraction (skip already extracted data)
         """
+        # Auto-detect project root if base_data_dir not provided
+        if base_data_dir is None:
+            # Get project root (4 levels up from this file)
+            project_root = Path(__file__).parent.parent.parent.parent
+            base_data_dir = str(project_root / "data")
+        
         self.base_data_dir = base_data_dir
         self.session = self._create_session()
         self.incremental = incremental

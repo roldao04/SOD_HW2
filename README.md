@@ -30,9 +30,10 @@ A comprehensive data engineering system that extracts, processes, and analyzes E
 | Source | Countries | Records | Status |
 |--------|-----------|---------|--------|
 | **Open Contracting Partnership** | 7 (DE, UK, IT, HR, XK, AL, ES) | 462K+ | ✅ Production |
-| **BASE Portugal** | Portugal | 213K+ | ✅ Production |
-| **TED (Partner Data)** | EU-wide | 17K+ | ✅ Production |
-| **TOTAL** | **8+** | **~537K** | **✅ Operational** |
+| **BASE Portugal** | Portugal | 58K+ | ✅ Production |
+| **TED (Partner Data)** | EU-wide | 16K+ | ✅ Production |
+| **Henrique & Monteiro** | Portugal | 203 | ✅ Production |
+| **TOTAL** | **38 países** | **~537K** | **✅ Operational** |
 
 ### Pipeline Statistics
 
@@ -40,6 +41,7 @@ A comprehensive data engineering system that extracts, processes, and analyzes E
 - **Silver Layer**: 1,097 Parquet files (cleaned, normalized)
 - **Gold Layer**: 6 datasets (unified + 5 aggregates)
 - **Total Records**: ~536,778 tenders
+- **Countries**: 38 European countries
 - **Date Range**: 2016-2025
 - **Storage Format**: Apache Parquet (Snappy compression)
 
@@ -154,14 +156,21 @@ make stats
 
 ```sql
 -- Total tenders
-SELECT COUNT(*) FROM minio.gold.unified;
+SELECT COUNT(*) as total_tenders FROM minio.gold.unified;
+-- Expected: 536,778
 
 -- Top 5 countries
-SELECT source_country, COUNT(*) as count
+SELECT source_country, COUNT(*) as tender_count
 FROM minio.gold.unified
 GROUP BY source_country
-ORDER BY count DESC
+ORDER BY tender_count DESC
 LIMIT 5;
+
+-- Portugal tenders (all sources)
+SELECT source, COUNT(*) as tender_count
+FROM minio.gold.unified
+WHERE source_country = 'portugal'
+GROUP BY source;
 ```
 
 ---

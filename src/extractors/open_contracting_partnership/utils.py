@@ -151,7 +151,7 @@ def add_license_metadata(data: Dict) -> Dict:
 def save_records_to_bronze(
     records: list,
     country: str,
-    base_dir: str = "/home/roldao/Desktop/MEI/SOD/hw2/data",
+    base_dir: Optional[str] = None,
     storage_client: Optional['MinIOClient'] = None
 ) -> Tuple[int, Dict[str, int]]:
     """
@@ -166,6 +166,11 @@ def save_records_to_bronze(
     Returns:
         Tuple of (total_saved, date_counts_dict)
     """
+    # Auto-detect base_dir if not provided
+    if base_dir is None:
+        project_root = Path(__file__).parent.parent.parent.parent
+        base_dir = str(project_root / "data")
+    
     total_saved = 0
     date_counts = {}
     records_by_date = {}

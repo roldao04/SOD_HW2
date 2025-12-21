@@ -5,7 +5,7 @@
 Run the interactive menu:
 
 ```bash
-cd /home/roldao/Desktop/MEI/SOD/hw2
+cd /path/to/your/project/root
 python3 -m src.extractors.open_contracting_partnership.main
 ```
 

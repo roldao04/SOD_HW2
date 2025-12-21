@@ -38,7 +38,7 @@ def load_silver_source(source_name: str, silver_dir: str = DEFAULT_SILVER_DIR) -
     Load all parquet files from a Silver source.
 
     Args:
-        source_name: Name of source ('open_contracting_partnership', 'ted', 'base_portugal')
+        source_name: Name of source ('open_contracting_partnership', 'ted', 'base_portugal', 'henrique_monteiro')
         silver_dir: Base directory for Silver data
 
     Returns:
@@ -215,16 +215,18 @@ def create_unified_dataset(
     ocp_df = load_silver_source('open_contracting_partnership', silver_dir)
     ted_df = load_silver_source('ted', silver_dir)
     portugal_df = load_silver_source('base_portugal', silver_dir)
+    hm_df = load_silver_source('henrique_monteiro', silver_dir)
 
     # Add source tags
     logger.info("\n2. Adding source tags...")
     ocp_df['source'] = 'ocp'
     ted_df['source'] = 'ted'
     portugal_df['source'] = 'base_portugal'
+    hm_df['source'] = 'henrique_monteiro'
 
     # Combine all sources
     logger.info("\n3. Combining sources...")
-    all_dfs = [df for df in [ocp_df, ted_df, portugal_df] if not df.empty]
+    all_dfs = [df for df in [ocp_df, ted_df, portugal_df, hm_df] if not df.empty]
 
     if not all_dfs:
         logger.error("No data found in any Silver source!")
@@ -235,19 +237,31 @@ def create_unified_dataset(
 
     # Standardize categories
     logger.info("\n4. Standardizing categories...")
+    before_std = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M before standardize: {before_std}")
     combined = standardize_categories(combined)
+    after_std = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M after standardize: {after_std}")
 
     # Add derived fields
     logger.info("\n5. Adding derived fields...")
+    before_derived = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M before derived: {before_derived}")
     combined = add_derived_fields(combined)
+    after_derived = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M after derived: {after_derived}")
 
     # Deduplicate by OCID + source_publication_id
     logger.info("\n6. Deduplicating...")
+    before_dedup_hm = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M before dedup: {before_dedup_hm}")
     pre_dedup = len(combined)
     combined = combined.drop_duplicates(
         subset=['ocid', 'source_publication_id'],
         keep='first'
     )
+    after_dedup_hm = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M after dedup: {after_dedup_hm}")
     duplicates = pre_dedup - len(combined)
     logger.info(f"Removed {duplicates:,} duplicates ({len(combined):,} unique records)")
 
@@ -258,6 +272,24 @@ def create_unified_dataset(
     Path(GOLD_UNIFIED_DIR).mkdir(parents=True, exist_ok=True)
 
     logger.info(f"\n7. Writing to {output_path}...")
+    before_write_hm = len(combined[combined['source'] == 'henrique_monteiro'])
+    logger.info(f"   H&M before write: {before_write_hm}")
+    logger.info(f"   Total records to write: {len(combined):,}")
+    
+    # Convert datetime columns to ISO strings for consistent Parquet schema
+    # This prevents PyArrow type errors when mixing Timestamp and string
+    date_columns = [
+        'publication_date', 'deadline_date', 'award_date',
+        'contract_start_date', 'contract_end_date', 'extraction_date'
+    ]
+    for col in date_columns:
+        if col in combined.columns:
+            # Convert to datetime first (handles mixed types), then to ISO string
+            combined[col] = pd.to_datetime(combined[col], errors='coerce').dt.strftime('%Y-%m-%d')
+    
+    # Drop the temporary datetime column used for derived fields
+    if 'publication_date_dt' in combined.columns:
+        combined = combined.drop(columns=['publication_date_dt'])
 
     # Write as single file to avoid schema inconsistencies
     # Note: Partitioning disabled due to PyArrow type incompatibility across partitions

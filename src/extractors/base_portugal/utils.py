@@ -15,6 +15,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class DateTimeEncoder(json.JSONEncoder):
+    """Custom JSON encoder that handles datetime objects."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat() + 'Z' if obj.tzinfo is None else obj.isoformat()
+        return super().default(obj)
+
+
 def parse_ocds_date(date_string: str) -> Optional[datetime]:
     """
     Parse OCDS date string to datetime object.
@@ -229,7 +237,7 @@ def _save_to_local(data: Dict, base_dir: str, country: str, pub_date: datetime, 
     filename = bronze_path / f"records_{timestamp}.json"
 
     with open(filename, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+        json.dump(data, f, indent=2, ensure_ascii=False, cls=DateTimeEncoder)
 
     logger.info(f"Saved {data['count']} records to local storage: {filename}")
 
