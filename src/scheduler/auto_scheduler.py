@@ -6,11 +6,13 @@ Implementa scheduling automático com:
 - Modo teste com execuções frequentes
 - Comparação com dados existentes (via state management)
 - Deduplicação automática
+- Smart startup: executa se passou das 2 AM e ainda não rodou hoje
 """
 import schedule
 import time
 import logging
-from datetime import datetime
+import json
+from datetime import datetime, date, time as dt_time
 from pathlib import Path
 
 from .scheduler import PipelineOrchestrator
@@ -20,10 +22,13 @@ from .scheduler import PipelineOrchestrator
 # ============================================================
 
 # Horário de execução diária (formato 24h)
-DAILY_RUN_TIME = "2:00"  # 2 AM
+DAILY_RUN_TIME = "02:00"  # 2 AM
 
 # Intervalo para testes (minutos)
 TEST_INTERVAL_MINUTES = 5
+
+# State file for tracking last run
+STATE_FILE = Path('data/scheduler_state.json')
 
 # Logging
 LOGS_DIR = Path('logs/scheduled_runs')
@@ -39,6 +44,106 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger('auto_scheduler')
+
+
+# ============================================================
+# STATE MANAGEMENT
+# ============================================================
+
+def load_last_run_state():
+    """
+    Load last run state from file.
+
+    Returns:
+        dict with 'last_run_date' (str in YYYY-MM-DD format) or None if no state
+    """
+    if not STATE_FILE.exists():
+        logger.info("No state file found (first run)")
+        return None
+
+    try:
+        with open(STATE_FILE, 'r') as f:
+            state = json.load(f)
+            logger.info(f"Loaded state: last run on {state.get('last_run_date', 'unknown')}")
+            return state
+    except Exception as e:
+        logger.error(f"Failed to load state file: {e}")
+        return None
+
+
+def save_last_run_state(run_date=None):
+    """
+    Save last run state to file.
+
+    Args:
+        run_date: date object or None (defaults to today)
+    """
+    if run_date is None:
+        run_date = date.today()
+
+    state = {
+        'last_run_date': run_date.isoformat(),
+        'last_run_timestamp': datetime.now().isoformat(),
+    }
+
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(STATE_FILE, 'w') as f:
+            json.dump(state, f, indent=2)
+        logger.info(f"Saved state: last run on {state['last_run_date']}")
+    except Exception as e:
+        logger.error(f"Failed to save state file: {e}")
+
+
+def should_run_on_startup():
+    """
+    Determine if pipeline should run on startup.
+
+    Logic:
+    - If current time >= 2 AM today
+    - AND last run was NOT today
+    - THEN run now
+
+    Returns:
+        bool: True if should run immediately
+    """
+    now = datetime.now()
+    today = now.date()
+
+    # Parse configured run time (e.g., "2:00")
+    hour, minute = map(int, DAILY_RUN_TIME.split(':'))
+    scheduled_time_today = datetime.combine(today, dt_time(hour, minute))
+
+    # Check if we're past the scheduled time
+    if now < scheduled_time_today:
+        logger.info(f"Current time ({now.strftime('%H:%M')}) is before scheduled time ({DAILY_RUN_TIME})")
+        return False
+
+    # Load last run state
+    state = load_last_run_state()
+
+    if state is None:
+        logger.info("No previous run found - will run now")
+        return True
+
+    last_run_date_str = state.get('last_run_date')
+    if not last_run_date_str:
+        logger.info("Invalid state (no last_run_date) - will run now")
+        return True
+
+    try:
+        last_run_date = date.fromisoformat(last_run_date_str)
+
+        if last_run_date < today:
+            logger.info(f"Last run was on {last_run_date} (not today) - will run now")
+            return True
+        else:
+            logger.info(f"Already ran today ({last_run_date}) - skipping startup run")
+            return False
+
+    except ValueError as e:
+        logger.error(f"Invalid date in state file: {e} - will run now")
+        return True
 
 
 # ============================================================
@@ -71,14 +176,18 @@ def scheduled_pipeline_run():
         # O state management em cada extractor já compara com dados existentes
         # e extrai apenas novos
         success = orchestrator.run_full_pipeline(sources=None)  # None = todas as fontes
-        
+
         if success:
             logger.info("Scheduled run completed SUCCESSFULLY")
+            # Save state to track that we ran today
+            save_last_run_state()
         else:
             logger.error("Scheduled run completed WITH ERRORS")
-            
+            # Still save state even on errors to avoid re-running same day
+            save_last_run_state()
+
         logger.info("=" * 70)
-        
+
         return success
         
     except Exception as e:
@@ -96,32 +205,81 @@ def scheduled_pipeline_run():
 def run_daily_scheduler():
     """
     MODO PRODUÇÃO: Executa diariamente no horário configurado.
-    
+
     Use este modo para produção. Pipeline roda automaticamente
     todos os dias às {DAILY_RUN_TIME}.
-    
+
     Como rodar em background (Linux):
-        nohup python -m src.orchestration.auto_scheduler daily > scheduler.log 2>&1 &
+        nohup python -m src.scheduler.auto_scheduler daily > scheduler.log 2>&1 &
     """
     logger.info("DAILY SCHEDULER STARTED")
     logger.info(f"Scheduled time: {DAILY_RUN_TIME} (daily)")
     logger.info(f"Logs directory: {LOGS_DIR}")
     logger.info("Press Ctrl+C to stop")
     logger.info("=" * 70)
-    
+
     # Agenda execução diária
     schedule.every().day.at(DAILY_RUN_TIME).do(scheduled_pipeline_run)
-    
+
     # Mostra próxima execução
     next_run = schedule.next_run()
     logger.info(f"Next run scheduled for: {next_run}")
-    
+
     # Loop infinito
     try:
         while True:
             schedule.run_pending()
             time.sleep(60)  # Check a cada minuto
-            
+
+    except KeyboardInterrupt:
+        logger.info("\nScheduler stopped by user")
+
+
+def run_daily_scheduler_with_startup_check():
+    """
+    MODO PRODUÇÃO COM STARTUP CHECK (RECOMENDADO PARA DOCKER).
+
+    Comportamento inteligente:
+    1. No startup: verifica se já passou das 2 AM e se ainda não rodou hoje
+       - Se sim: executa imediatamente
+       - Se não: aguarda próxima execução agendada
+    2. Continua com schedule diário às {DAILY_RUN_TIME}
+
+    Este modo garante que:
+    - Pipeline roda pelo menos 1x por dia (mesmo com container restarts)
+    - Nunca roda 2x no mesmo dia (evita duplicação)
+    - Recupera execuções perdidas se container estava down às 2 AM
+    """
+    logger.info("DAILY SCHEDULER WITH STARTUP CHECK STARTED")
+    logger.info(f"Scheduled time: {DAILY_RUN_TIME} (daily)")
+    logger.info(f"State file: {STATE_FILE}")
+    logger.info(f"Logs directory: {LOGS_DIR}")
+    logger.info("Press Ctrl+C to stop")
+    logger.info("=" * 70)
+
+    # Check if we should run immediately on startup
+    logger.info("\nChecking if startup run is needed...")
+    if should_run_on_startup():
+        logger.info("STARTUP RUN: Executing pipeline now")
+        scheduled_pipeline_run()
+    else:
+        logger.info("STARTUP: No immediate run needed")
+
+    # Schedule daily runs
+    logger.info(f"\nScheduling daily runs at {DAILY_RUN_TIME}...")
+    schedule.every().day.at(DAILY_RUN_TIME).do(scheduled_pipeline_run)
+
+    # Show next scheduled run
+    next_run = schedule.next_run()
+    logger.info(f"Next scheduled run: {next_run}")
+    logger.info("=" * 70)
+
+    # Loop infinito
+    try:
+        while True:
+            schedule.run_pending()
+            time.sleep(60)  # Check a cada minuto
+
     except KeyboardInterrupt:
         logger.info("\nScheduler stopped by user")
 
@@ -195,15 +353,15 @@ def main():
     
     if len(sys.argv) < 2:
         print("\nERROR: Mode not specified\n")
-        print("Usage: python -m src.orchestration.auto_scheduler <mode>\n")
+        print("Usage: python -m src.scheduler.auto_scheduler <mode>\n")
         print("Modes:")
         print("  daily  - Run daily at configured time (PRODUCTION)")
         print("  test   - Run every N minutes (DEVELOPMENT)")
         print("  once   - Run once and exit (MANUAL)\n")
         print("Examples:")
-        print("  python -m src.orchestration.auto_scheduler daily")
-        print("  python -m src.orchestration.auto_scheduler test")
-        print("  python -m src.orchestration.auto_scheduler once\n")
+        print("  python -m src.scheduler.auto_scheduler daily")
+        print("  python -m src.scheduler.auto_scheduler test")
+        print("  python -m src.scheduler.auto_scheduler once\n")
         print(f"Configuration:")
         print(f"  Daily run time: {DAILY_RUN_TIME}")
         print(f"  Test interval: {TEST_INTERVAL_MINUTES} minutes")
@@ -213,9 +371,10 @@ def main():
     mode = sys.argv[1].lower()
     
     print(f"\n✓ Mode selected: {mode.upper()}\n")
-    
+
     if mode == 'daily':
-        run_daily_scheduler()
+        # Use smart scheduler with startup check (recommended for Docker)
+        run_daily_scheduler_with_startup_check()
     elif mode == 'test':
         run_test_scheduler()
     elif mode == 'once':

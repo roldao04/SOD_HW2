@@ -23,7 +23,7 @@ A biblioteca `schedule>=1.2.0` já está incluída.
 
 ### **2. Verificar estrutura:**
 ```bash
-src/orchestration/
+src/scheduler/
 ├── __init__.py
 ├── auto_scheduler.py    # ⭐ Scheduler automático (USAR ESTE)
 ├── scheduler.py         # Pipeline orchestrator
@@ -40,7 +40,7 @@ src/orchestration/
 Executa o pipeline **a cada 5 minutos** (configurável):
 
 ```bash
-python -m src.orchestration.auto_scheduler test
+python -m src.scheduler.auto_scheduler test
 ```
 
 **Output esperado:**
@@ -77,12 +77,12 @@ Next run scheduled for: 2025-12-21 14:35:52
 Executa **1x por dia** às **02:00** (configurável):
 
 ```bash
-python -m src.orchestration.auto_scheduler daily
+python -m src.scheduler.auto_scheduler daily
 ```
 
 **Para rodar em background (Linux/Mac):**
 ```bash
-nohup python -m src.orchestration.auto_scheduler daily > scheduler.log 2>&1 &
+nohup python -m src.scheduler.auto_scheduler daily > scheduler.log 2>&1 &
 ```
 
 **Verificar se está rodando:**
@@ -105,7 +105,7 @@ kill <PID>
 Executa **1 vez** e termina:
 
 ```bash
-python -m src.orchestration.auto_scheduler once
+python -m src.scheduler.auto_scheduler once
 ```
 
 **Ideal para:**
@@ -117,7 +117,7 @@ python -m src.orchestration.auto_scheduler once
 
 ##  **Configuração**
 
-### **Arquivo: `src/orchestration/config.py`**
+### **Arquivo: `src/scheduler/config.py`**
 
 ```python
 # Hora de execução diária (formato 24h)
@@ -133,7 +133,7 @@ CONTINUE_ON_ERROR = True
 UPLOAD_TO_MINIO = True
 ```
 
-### **Arquivo: `src/orchestration/auto_scheduler.py`**
+### **Arquivo: `src/scheduler/auto_scheduler.py`**
 
 ```python
 # No topo do arquivo, podes alterar:
@@ -260,27 +260,27 @@ ERRORS (0):
 ### **1. Testar pipeline manualmente:**
 ```bash
 # Execução única com logs detalhados
-python -m src.orchestration.auto_scheduler once
+python -m src.scheduler.auto_scheduler once
 ```
 
 ### **2. Testar apenas extraction:**
 ```bash
-python -m src.orchestration.scheduler --extract-only
+python -m src.scheduler.scheduler --extract-only
 ```
 
 ### **3. Testar apenas processing:**
 ```bash
-python -m src.orchestration.scheduler --process-only
+python -m src.scheduler.scheduler --process-only
 ```
 
 ### **4. Testar apenas Gold layer:**
 ```bash
-python -m src.orchestration.scheduler --gold-only
+python -m src.scheduler.scheduler --gold-only
 ```
 
 ### **5. Testar fontes específicas:**
 ```bash
-python -m src.orchestration.scheduler --sources base_portugal henrique_monteiro
+python -m src.scheduler.scheduler --sources base_portugal henrique_monteiro
 ```
 
 ---
@@ -320,10 +320,10 @@ EOF
 ### **Para DESENVOLVIMENTO:**
 ```bash
 # 1. Teste inicial (execução única)
-python -m src.orchestration.auto_scheduler once
+python -m src.scheduler.auto_scheduler once
 
 # 2. Se funcionou, teste com scheduler de 5 min
-python -m src.orchestration.auto_scheduler test
+python -m src.scheduler.auto_scheduler test
 
 # 3. Deixar rodar 2-3 ciclos para validar
 # 4. Para com Ctrl+C quando validado
@@ -335,7 +335,7 @@ python -m src.orchestration.auto_scheduler test
 # DAILY_RUN_TIME = "02:00"
 
 # 2. Rodar em background
-nohup python -m src.orchestration.auto_scheduler daily > scheduler_prod.log 2>&1 &
+nohup python -m src.scheduler.auto_scheduler daily > scheduler_prod.log 2>&1 &
 
 # 3. Guardar PID
 echo $! > scheduler.pid
@@ -352,8 +352,8 @@ kill $(cat scheduler.pid)
 ##  **Referências**
 
 - **Scheduler library**: https://schedule.readthedocs.io/
-- **Pipeline orchestrator**: `src/orchestration/scheduler.py`
-- **Config**: `src/orchestration/config.py`
+- **Pipeline orchestrator**: `src/scheduler/scheduler.py`
+- **Config**: `src/scheduler/config.py`
 - **Logs**: `logs/scheduled_runs/scheduler.log`
 
 ---
@@ -373,8 +373,8 @@ kill $(cat scheduler.pid)
 
 ##  **Próximos Passos**
 
-1. **Testar agora**: `python -m src.orchestration.auto_scheduler once`
-2. **Se funcionar**: `python -m src.orchestration.auto_scheduler test`
+1. **Testar agora**: `python -m src.scheduler.auto_scheduler once`
+2. **Se funcionar**: `python -m src.scheduler.auto_scheduler test`
 3. **Validar**: Deixar rodar 2-3 ciclos de 5 minutos
 4. **Produção**: Configurar `daily` e rodar em background
 

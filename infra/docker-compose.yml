@@ -115,6 +115,31 @@ services:
       start_period: 5s
     restart: unless-stopped
 
+  # Scheduler - Automated daily pipeline orchestration
+  scheduler:
+    build:
+      context: ..
+      dockerfile: infra/dockerfile/scheduler/Dockerfile
+    container_name: sod-scheduler
+    networks:
+      - sod-network
+    volumes:
+      # Mount data directory for state persistence and pipeline execution
+      - ../data:/app/data
+      # Mount logs directory for scheduler logs
+      - ../logs:/app/logs
+      # Mount source code for development (read-only)
+      - ../src:/app/src:ro
+    depends_on:
+      - minio
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "auto_scheduler"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
 networks:
   sod-network:
     driver: bridge

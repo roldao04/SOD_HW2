@@ -1,5 +1,5 @@
 """
-Orchestration module for E-Procurement data pipeline.
+Scheduler module for E-Procurement data pipeline.
 
 Provides automated execution of the complete data pipeline:
 - Bronze layer extraction

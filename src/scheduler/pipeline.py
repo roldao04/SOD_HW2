@@ -368,6 +368,6 @@ def run_pipeline(run_id: Optional[str] = None) -> Dict:
 
 
 if __name__ == '__main__':
-    # Para testes: python -m src.orchestration.pipeline
+    # Para testes: python -m src.scheduler.pipeline
     stats = run_pipeline()
     sys.exit(0 if stats['success'] else 1)

@@ -14,6 +14,9 @@ boto3>=1.34.0
 # Configuration
 python-dotenv>=1.0.0
 
+# Scheduling (for auto_scheduler)
+schedule>=1.2.0
+
 # Dremio integration
 pyarrow>=12.0.0
 

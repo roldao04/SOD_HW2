@@ -10,19 +10,19 @@ Automates the execution of the complete data pipeline:
 
 Usage:
     # Full pipeline
-    python -m src.orchestration.scheduler
-    
+    python -m src.scheduler.scheduler
+
     # Specific sources only
-    python -m src.orchestration.scheduler --sources base_portugal open_contracting
-    
+    python -m src.scheduler.scheduler --sources base_portugal open_contracting
+
     # Only extraction
-    python -m src.orchestration.scheduler --extract-only
-    
+    python -m src.scheduler.scheduler --extract-only
+
     # Only processing
-    python -m src.orchestration.scheduler --process-only
-    
+    python -m src.scheduler.scheduler --process-only
+
     # Only gold layer
-    python -m src.orchestration.scheduler --gold-only
+    python -m src.scheduler.scheduler --gold-only
 """
 
 import logging
@@ -446,19 +446,19 @@ def main():
         epilog="""
 Examples:
   # Run full pipeline
-  python -m src.orchestration.scheduler
-  
+  python -m src.scheduler.scheduler
+
   # Run only for specific sources
-  python -m src.orchestration.scheduler --sources base_portugal open_contracting
-  
+  python -m src.scheduler.scheduler --sources base_portugal open_contracting
+
   # Only extract data
-  python -m src.orchestration.scheduler --extract-only
-  
+  python -m src.scheduler.scheduler --extract-only
+
   # Only process to Silver
-  python -m src.orchestration.scheduler --process-only
-  
+  python -m src.scheduler.scheduler --process-only
+
   # Only generate Gold layer
-  python -m src.orchestration.scheduler --gold-only
+  python -m src.scheduler.scheduler --gold-only
 """
     )
     

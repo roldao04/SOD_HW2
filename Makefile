@@ -13,6 +13,7 @@ help:
 	@echo ""
 	@echo "Quick Start:"
 	@echo "  make up                  - Setup and start all services (auto-installs if needed)"
+	@echo "                             NOTE: Auto-scheduler runs daily at 2 AM automatically!"
 	@echo "  make extract             - Extract data from all sources"
 	@echo "  make process             - Process all extracted data"
 	@echo ""
@@ -66,6 +67,12 @@ help:
 	@echo "  make orchestrate-extract - Run all extractors only"
 	@echo "  make orchestrate-process - Run all processors only"
 	@echo "  make orchestrate-gold    - Run gold layer generation only"
+	@echo ""
+	@echo "Auto-Scheduler (Daily Automation):"
+	@echo "  make scheduler-logs      - View scheduler logs (see daily runs)"
+	@echo "  make scheduler-status    - Check scheduler status and next run time"
+	@echo "  make scheduler-state     - View last run state"
+	@echo "  make scheduler-restart   - Restart scheduler service"
 	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean               - Remove all containers and volumes (destructive!)"
@@ -453,35 +460,35 @@ dremio-status:
 orchestrate:
 	@echo "Running complete pipeline orchestration..."
 	@echo ""
-	$(PYTHON) -m src.orchestration.scheduler
+	$(PYTHON) -m src.scheduler.scheduler
 	@echo ""
 	@echo "✓ Pipeline orchestration complete"
 
 orchestrate-extract:
 	@echo "Running extractors orchestration..."
 	@echo ""
-	$(PYTHON) -m src.orchestration.scheduler --extract-only
+	$(PYTHON) -m src.scheduler.scheduler --extract-only
 	@echo ""
 	@echo "✓ Extraction orchestration complete"
 
 orchestrate-process:
 	@echo "Running processors orchestration..."
 	@echo ""
-	$(PYTHON) -m src.orchestration.scheduler --process-only
+	$(PYTHON) -m src.scheduler.scheduler --process-only
 	@echo ""
 	@echo "✓ Processing orchestration complete"
 
 orchestrate-gold:
 	@echo "Running gold layer orchestration..."
 	@echo ""
-	$(PYTHON) -m src.orchestration.scheduler --gold-only
+	$(PYTHON) -m src.scheduler.scheduler --gold-only
 	@echo ""
 	@echo "✓ Gold layer orchestration complete"
 
 orchestrate-sources:
 	@echo "Running orchestration for specific sources: $(SOURCES)..."
 	@echo ""
-	$(PYTHON) -m src.orchestration.scheduler --sources $(SOURCES)
+	$(PYTHON) -m src.scheduler.scheduler --sources $(SOURCES)
 	@echo ""
 	@echo "✓ Source orchestration complete"
 
@@ -561,4 +568,49 @@ chatbot-test-all:
 	@echo ""
 	$(MAKE) chatbot-test-analytics
 
-.PHONY: chatbot-logs chatbot-restart chatbot-rebuild chatbot-shell chatbot-test chatbot-test-query chatbot-test-analytics chatbot-test-all
+# ===================================================
+# Auto-Scheduler Targets (Daily Automation)
+# ===================================================
+
+scheduler-logs:
+	@echo "Showing scheduler logs (Ctrl+C to exit)..."
+	@echo ""
+	cd infra && docker compose logs -f scheduler
+
+scheduler-status:
+	@echo "Checking scheduler status..."
+	@echo ""
+	@if docker ps --filter "name=sod-scheduler" --format "{{.Status}}" | grep -q "Up"; then \
+		echo "✓ Scheduler container is running"; \
+		echo ""; \
+		echo "Last run state:"; \
+		if [ -f "data/scheduler_state.json" ]; then \
+			cat data/scheduler_state.json | python3 -m json.tool; \
+		else \
+			echo "  No state file found (scheduler hasn't run yet)"; \
+		fi; \
+		echo ""; \
+		echo "Recent log entries:"; \
+		docker logs sod-scheduler --tail 20; \
+	else \
+		echo "✗ Scheduler container is not running"; \
+		echo "Run: make up"; \
+	fi
+
+scheduler-state:
+	@echo "Last scheduler run state:"
+	@echo ""
+	@if [ -f "data/scheduler_state.json" ]; then \
+		cat data/scheduler_state.json | python3 -m json.tool; \
+	else \
+		echo "No state file found - scheduler hasn't run yet"; \
+		echo "State file will be created at: data/scheduler_state.json"; \
+	fi
+
+scheduler-restart:
+	@echo "Restarting scheduler service..."
+	cd infra && docker compose restart scheduler
+	@echo "✓ Scheduler restarted"
+	@echo "View logs with: make scheduler-logs"
+
+.PHONY: chatbot-logs chatbot-restart chatbot-rebuild chatbot-shell chatbot-test chatbot-test-query chatbot-test-analytics chatbot-test-all scheduler-logs scheduler-status scheduler-state scheduler-restart
