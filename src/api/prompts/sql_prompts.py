@@ -20,6 +20,8 @@ Your task is to convert natural language questions into valid SQL queries.
 6. Handle NULL values appropriately
 7. Use proper date comparisons for date columns
 8. Return ONLY the SQL query - no explanations or markdown
+9. **CRITICAL**: The columns "year" and "month" are SQL reserved words - ALWAYS wrap them in double quotes: "year", "month"
+10. **DATA NOTE**: Most recent data is from 2025. Use "year" = 2025 for current/recent data queries unless user specifically asks for 2024.
 
 # Database Context:
 {schema_context}
@@ -34,48 +36,51 @@ GROUP BY source_country
 ORDER BY tender_count DESC
 LIMIT 10;
 
-Question: What are the total contract values by country for 2024?
-SQL: SELECT source_country, SUM(contract_value) as total_value
+Question: What are the total contract values by country for 2025?
+SQL: SELECT source_country, 
+       SUM(tender_value_amount) as total_value,
+       COUNT(*) as tender_count
 FROM minio.gold.unified
-WHERE EXTRACT(YEAR FROM publication_date) = 2024
-AND contract_value IS NOT NULL
+WHERE "year" = 2025
+AND tender_value_amount IS NOT NULL
 GROUP BY source_country
 ORDER BY total_value DESC;
 
 Question: Find all tenders published in Portugal in the last month
-SQL: SELECT source_id, contract_object, publication_date, contract_value
+SQL: SELECT tender_id, tender_title, publication_date, tender_value_amount, tender_value_currency
 FROM minio.gold.unified
-WHERE source_country = 'PT'
-AND publication_date >= CURRENT_DATE - INTERVAL '1' MONTH
+WHERE source_country = 'portugal'
+AND CAST(publication_date AS DATE) >= CURRENT_DATE - INTERVAL '1' MONTH
 ORDER BY publication_date DESC
 LIMIT 100;
 
 Question: Show me tenders with values greater than 1 million euros
-SQL: SELECT source_id, contract_object, contracting_authorities, contract_value, source_country
+SQL: SELECT tender_id, tender_title, buyer_name, tender_value_amount, tender_value_currency, source_country
 FROM minio.gold.unified
-WHERE contract_value > 1000000
-AND currency = 'EUR'
-ORDER BY contract_value DESC
+WHERE tender_value_amount > 1000000
+AND tender_value_currency = 'EUR'
+ORDER BY tender_value_amount DESC
 LIMIT 50;
 
-Question: What is the average contract value by month in 2024?
+Question: What is the average contract value by month in 2025?
 SQL: SELECT
-    EXTRACT(YEAR FROM publication_date) as year,
-    EXTRACT(MONTH FROM publication_date) as month,
-    AVG(contract_value) as avg_value,
+    "year",
+    "month",
+    AVG(tender_value_amount) as avg_value,
     COUNT(*) as tender_count
 FROM minio.gold.unified
-WHERE EXTRACT(YEAR FROM publication_date) = 2024
-AND contract_value IS NOT NULL
-GROUP BY EXTRACT(YEAR FROM publication_date), EXTRACT(MONTH FROM publication_date)
-ORDER BY year, month;
+WHERE "year" = 2025
+AND tender_value_amount IS NOT NULL
+GROUP BY "year", "month"
+ORDER BY "year", "month";
 
 Question: Find tenders related to IT services or software
-SQL: SELECT source_id, contract_object, contracting_authorities, publication_date, contract_value
+SQL: SELECT tender_id, tender_title, tender_description, buyer_name, publication_date, tender_value_amount
 FROM minio.gold.unified
-WHERE LOWER(contract_object) LIKE '%software%'
-OR LOWER(contract_object) LIKE '%information technology%'
-OR LOWER(contract_object) LIKE '%it services%'
+WHERE LOWER(tender_title) LIKE '%software%'
+OR LOWER(tender_title) LIKE '%information technology%'
+OR LOWER(tender_title) LIKE '%it services%'
+OR LOWER(tender_description) LIKE '%software%'
 ORDER BY publication_date DESC
 LIMIT 50;
 
@@ -198,20 +203,20 @@ def extract_sql_from_response(response: str) -> str:
 
 # Domain-specific keywords for procurement data
 PROCUREMENT_KEYWORDS = {
-    "tender": "contract_object or source_id",
-    "contract": "contract_object or contract_value",
-    "authority": "contracting_authorities",
+    "tender": "tender_title or tender_id",
+    "contract": "tender_title or tender_value_amount",
+    "authority": "buyer_name",
     "cpv": "cpv_codes",
     "country": "source_country",
-    "value": "contract_value",
-    "price": "contract_value",
-    "cost": "contract_value",
+    "value": "tender_value_amount",
+    "price": "tender_value_amount",
+    "cost": "tender_value_amount",
     "date": "publication_date or closing_date",
     "published": "publication_date",
     "deadline": "closing_date",
-    "currency": "currency",
-    "award": "award_date or contractor_name",
-    "winner": "contractor_name",
+    "currency": "tender_value_currency",
+    "award": "award_date or supplier_name",
+    "winner": "supplier_name",
 }
 
 

@@ -3,12 +3,106 @@ Configuration for Gold Layer processing.
 
 Defines:
 - Category standardization mappings
+- Country code normalization
 - Gold layer schema
 - Quality thresholds
 - Default values
 """
 
 from typing import Dict, List
+
+# ============================================================================
+# COUNTRY CODE NORMALIZATION
+# ============================================================================
+
+# Map ISO codes and variations to lowercase full names
+COUNTRY_NORMALIZATION_MAP: Dict[str, str] = {
+    # ISO codes to lowercase names
+    'PT': 'portugal',
+    'ES': 'spain',
+    'FR': 'france',
+    'DE': 'germany',
+    'IT': 'italy',
+    'UK': 'uk',
+    'GB': 'uk',
+    'NL': 'netherlands',
+    'BE': 'belgium',
+    'AT': 'austria',
+    'SE': 'sweden',
+    'NO': 'norway',
+    'FI': 'finland',
+    'DK': 'denmark',
+    'PL': 'poland',
+    'CZ': 'czech_republic',
+    'HR': 'croatia',
+    'GR': 'greece',
+    'IE': 'ireland',
+    'CH': 'switzerland',
+    'XK': 'kosovo',
+    'AL': 'albania',
+    'RS': 'serbia',
+    'MK': 'north_macedonia',
+    'SI': 'slovenia',
+    'SK': 'slovakia',
+    'HU': 'hungary',
+    'RO': 'romania',
+    'BG': 'bulgaria',
+    'BGr': 'bulgaria',
+    'LT': 'lithuania',
+    'LTu': 'lithuania',
+    'LV': 'latvia',
+    'LVa': 'latvia',
+    'EE': 'estonia',
+    'ESt': 'estonia',
+    'CY': 'cyprus',
+    'CYp': 'cyprus',
+    'MT': 'malta',
+    'LU': 'luxembourg',
+    'IS': 'iceland',
+    'ISl': 'iceland',
+    'MD': 'moldova',
+    'MDa': 'moldova',
+    'SEN': 'senegal',
+    'BES': 'caribbean_netherlands',
+    # Already normalized (keep as-is)
+    'portugal': 'portugal',
+    'spain': 'spain',
+    'france': 'france',
+    'germany': 'germany',
+    'italy': 'italy',
+    'uk': 'uk',
+    'united_kingdom': 'uk',
+    'netherlands': 'netherlands',
+    'belgium': 'belgium',
+    'austria': 'austria',
+    'sweden': 'sweden',
+    'norway': 'norway',
+    'finland': 'finland',
+    'denmark': 'denmark',
+    'poland': 'poland',
+    'czech_republic': 'czech_republic',
+    'croatia': 'croatia',
+    'greece': 'greece',
+    'ireland': 'ireland',
+    'switzerland': 'switzerland',
+    'kosovo': 'kosovo',
+    'albania': 'albania',
+    'serbia': 'serbia',
+    'north_macedonia': 'north_macedonia',
+    'slovenia': 'slovenia',
+    'slovakia': 'slovakia',
+    'hungary': 'hungary',
+    'romania': 'romania',
+    'bulgaria': 'bulgaria',
+    'lithuania': 'lithuania',
+    'latvia': 'latvia',
+    'estonia': 'estonia',
+    'cyprus': 'cyprus',
+    'malta': 'malta',
+    'luxembourg': 'luxembourg',
+    'iceland': 'iceland',
+    'moldova': 'moldova',
+}
 
 # ============================================================================
 # CATEGORY STANDARDIZATION

@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Analytics Bot (Gemini) - Advanced model for complex analysis
     ANALYTICS_MODEL: str = "models/gemini-2.5-pro"
     ANALYTICS_TEMPERATURE: float = 0.7
-    ANALYTICS_MAX_TOKENS: int = 2048
+    ANALYTICS_MAX_TOKENS: int = 4096  # Increased for complete analysis
 
     # Query Execution Limits
     MAX_QUERY_TIMEOUT: int = 30  # seconds

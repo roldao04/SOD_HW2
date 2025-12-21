@@ -33,7 +33,7 @@ class QueryCreatorRequest(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "message": "What are the total contract values by country for 2024?",
+                "message": "What are the total contract values by country for 2025?",
                 "include_explanation": True,
                 "max_attempts": 3
             }

@@ -308,18 +308,21 @@ def extract_insights_from_response(response: str) -> Dict[str, Any]:
         # Split by sections
         sections = response.split("##")
 
-        for section in sections:
+        for idx, section in enumerate(sections):
             section = section.strip()
             if not section:
                 continue
 
             # Summary section
             if section.lower().startswith("summary"):
-                insights["summary"] = section.split("\n", 1)[1].strip()
+                content_parts = section.split("\n", 1)
+                if len(content_parts) > 1:
+                    insights["summary"] = content_parts[1].strip()
 
             # Key insights section
             elif "key insight" in section.lower():
-                content = section.split("\n", 1)[1] if "\n" in section else ""
+                content_parts = section.split("\n", 1)
+                content = content_parts[1] if len(content_parts) > 1 else ""
                 # Extract bullet points
                 bullets = [
                     line.strip("- *").strip()
@@ -328,13 +331,10 @@ def extract_insights_from_response(response: str) -> Dict[str, Any]:
                 ]
                 insights["key_insights"] = bullets
 
-            # Detailed analysis
-            elif "detail" in section.lower() or "analysis" in section.lower():
-                insights["detailed_analysis"] = section.split("\n", 1)[1].strip()
-
-            # Follow-up questions
-            elif "follow" in section.lower() or "question" in section.lower():
-                content = section.split("\n", 1)[1] if "\n" in section else ""
+            # Follow-up questions (check before detailed analysis to avoid misclassification)
+            elif "follow" in section.lower() and "question" in section.lower():
+                content_parts = section.split("\n", 1)
+                content = content_parts[1] if len(content_parts) > 1 else ""
                 # Extract numbered or bulleted items
                 questions = [
                     line.strip("1234567890.- *").strip()
@@ -343,7 +343,15 @@ def extract_insights_from_response(response: str) -> Dict[str, Any]:
                 ]
                 insights["follow_up_questions"] = questions
 
+            # Detailed analysis
+            elif "detail" in section.lower() or "analysis" in section.lower():
+                content_parts = section.split("\n", 1)
+                if len(content_parts) > 1:
+                    insights["detailed_analysis"] = content_parts[1].strip()
+
     except Exception as e:
+        import traceback
         print(f"Error parsing insights: {e}")
+        print(f"Traceback: {traceback.format_exc()}")
 
     return insights

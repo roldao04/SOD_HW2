@@ -20,6 +20,7 @@ import pyarrow.parquet as pq
 
 from .config import (
     CATEGORY_STANDARDIZATION_MAP,
+    COUNTRY_NORMALIZATION_MAP,
     PARTITION_COLS,
     COMPRESSION,
     DEFAULT_SILVER_DIR,
@@ -101,6 +102,37 @@ def standardize_categories(df: pd.DataFrame) -> pd.DataFrame:
     if len(unmapped) > 0:
         logger.warning(f"Found {len(unmapped)} unmapped categories: {list(unmapped)[:10]}")
 
+    return df
+
+
+def normalize_country_codes(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize source_country to lowercase full names.
+    
+    Converts ISO codes (PT, ES, etc.) and variations to standardized
+    lowercase country names (portugal, spain, etc.).
+    
+    Args:
+        df: DataFrame with 'source_country' column
+        
+    Returns:
+        DataFrame with normalized source_country values
+    """
+    original_values = df['source_country'].unique()
+    
+    # Normalize using map, keep unmapped as lowercase
+    df['source_country'] = df['source_country'].apply(
+        lambda x: COUNTRY_NORMALIZATION_MAP.get(str(x).strip(), str(x).lower().strip())
+    )
+    
+    normalized_values = df['source_country'].unique()
+    
+    # Log changes
+    logger.info(f"Normalized {len(original_values)} country codes to {len(normalized_values)} values")
+    if len(original_values) != len(normalized_values):
+        logger.info(f"  Original: {sorted(original_values)[:10]}")
+        logger.info(f"  Normalized: {sorted(normalized_values)[:10]}")
+    
     return df
 
 
@@ -237,16 +269,14 @@ def create_unified_dataset(
 
     # Standardize categories
     logger.info("\n4. Standardizing categories...")
-    before_std = len(combined[combined['source'] == 'henrique_monteiro'])
-    logger.info(f"   H&M before standardize: {before_std}")
     combined = standardize_categories(combined)
-    after_std = len(combined[combined['source'] == 'henrique_monteiro'])
-    logger.info(f"   H&M after standardize: {after_std}")
+    
+    # Normalize country codes
+    logger.info("\n5. Normalizing country codes...")
+    combined = normalize_country_codes(combined)
 
     # Add derived fields
-    logger.info("\n5. Adding derived fields...")
-    before_derived = len(combined[combined['source'] == 'henrique_monteiro'])
-    logger.info(f"   H&M before derived: {before_derived}")
+    logger.info("\n6. Adding derived fields...")
     combined = add_derived_fields(combined)
     after_derived = len(combined[combined['source'] == 'henrique_monteiro'])
     logger.info(f"   H&M after derived: {after_derived}")
