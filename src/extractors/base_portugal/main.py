@@ -203,7 +203,8 @@ Examples:
                 print("="*60)
                 results = extract_portugal(extractor, year)
 
-                if results.get('successful_publications', 0) == 0:
+                # Success even if no new data (state management skipped extraction)
+                if results.get('successful_publications', 0) == 0 and results.get('skipped_publications', 0) == 0:
                     logger.error(f"No successful extractions for year {year}")
                     sys.exit(1)
 

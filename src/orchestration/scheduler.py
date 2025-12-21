@@ -46,16 +46,20 @@ class PipelineOrchestrator:
     # Available sources
     SOURCES = {
         'base_portugal': {
-            'extractor': ['python3', '-m', 'src.extractors.base_portugal.main'],
-            'processor': ['python3', '-m', 'src.processing.base_portugal.main', '--skip-confirmation'],
+            'extractor': ['python3', '-m', 'src.extractors.base_portugal.main', '--all'],
+            'processor': ['python3', '-m', 'src.processing.base_portugal.main', '--all'],
         },
         'open_contracting': {
-            'extractor': ['python3', '-m', 'src.extractors.open_contracting_partnership.main'],
-            'processor': ['python3', '-m', 'src.processing.open_contracting_partnership.main', '--all', '--skip-confirmation'],
+            'extractor': ['python3', '-m', 'src.extractors.open_contracting_partnership.main', '--all'],
+            'processor': ['python3', '-m', 'src.processing.open_contracting_partnership.main', '--all'],
         },
         'ted': {
             'extractor': None,  # No extractor available
-            'processor': ['python3', '-m', 'src.processing.ted.main'],
+            'processor': ['python3', '-m', 'src.processing.ted.main', '--all'],
+        },
+        'henrique_monteiro': {
+            'extractor': None,  # Static data (Excel file)
+            'processor': ['python3', '-m', 'src.processing.henrique_monteiro.main', '--all'],
         },
     }
     
@@ -89,6 +93,8 @@ class PipelineOrchestrator:
             True if successful
         """
         logger.info(f"▶ Running: {name}")
+        logger.info(f"  Command: {' '.join(cmd)}")
+        logger.info(f"  Timeout: {timeout}s")
         start = time.time()
         
         try:
@@ -102,36 +108,68 @@ class PipelineOrchestrator:
             
             duration = time.time() - start
             
+            # Log stdout for debugging (check for "Skipping" messages)
+            if result.stdout:
+                # Check for state management messages
+                if 'Skipping' in result.stdout or 'already extracted' in result.stdout:
+                    logger.info(f"State management detected - skipping already processed data")
+                    # Show first few lines of output
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines[:10]:
+                        if 'Skipping' in line or 'already extracted' in line:
+                            logger.info(f"     {line}")
+                
+                # Check for extraction/processing counts
+                if 'Total records' in result.stdout:
+                    for line in result.stdout.strip().split('\n'):
+                        if 'Total records' in line or 'Successful:' in line or 'records saved' in line:
+                            logger.info(f"     {line.strip()}")
+            
             if result.returncode == 0:
-                logger.info(f"✓ {name} completed in {duration:.1f}s")
+                logger.info(f" {name} completed in {duration:.1f}s ({duration/60:.1f} min)")
                 return True
             else:
                 error_msg = result.stderr[:500] if result.stderr else "Unknown error"
                 
                 if allow_failure:
-                    logger.warning(f"⚠ {name} failed (continuing): {error_msg[:100]}")
+                    logger.warning(f" {name} failed (continuing): {error_msg[:100]}")
+                    # Show more output for debugging
+                    if result.stdout:
+                        logger.warning(f"  Last stdout lines:")
+                        for line in result.stdout.strip().split('\n')[-5:]:
+                            logger.warning(f"     {line}")
                     self.stats['warnings'].append({
                         'task': name,
                         'error': error_msg
                     })
                     return False
                 else:
-                    logger.error(f"✗ {name} failed: {error_msg[:200]}")
+                    logger.error(f" {name} failed: {error_msg[:200]}")
                     self.stats['errors'].append({
                         'task': name,
                         'error': error_msg
                     })
                     return False
                     
-        except subprocess.TimeoutExpired:
-            logger.error(f"✗ {name} timeout after {timeout}s")
+        except subprocess.TimeoutExpired as e:
+            duration = time.time() - start
+            logger.error(f" {name} timeout after {timeout}s (actual: {duration:.1f}s)")
+            # Try to get partial output
+            if hasattr(e, 'stdout') and e.stdout:
+                logger.error(f"  Partial stdout before timeout:")
+                for line in e.stdout.strip().split('\n')[-10:]:
+                    logger.error(f"     {line}")
+            if hasattr(e, 'stderr') and e.stderr:
+                logger.error(f"  Partial stderr before timeout:")
+                for line in e.stderr.strip().split('\n')[-10:]:
+                    logger.error(f"     {line}")
             self.stats['errors'].append({
                 'task': name,
                 'error': f'Timeout after {timeout}s'
             })
             return False
         except Exception as e:
-            logger.error(f"✗ {name} error: {e}")
+            logger.error(f" {name} error: {e}")
             self.stats['errors'].append({
                 'task': name,
                 'error': str(e)
@@ -164,7 +202,7 @@ class PipelineOrchestrator:
             extractor_cmd = config.get('extractor')
             
             if extractor_cmd is None:
-                logger.warning(f"⚠ No extractor available for {source_name}, skipping")
+                logger.warning(f" No extractor available for {source_name}, skipping")
                 results[source_name] = 'no_extractor'
                 self.stats['warnings'].append({
                     'task': f'Extract {source_name}',
@@ -175,7 +213,7 @@ class PipelineOrchestrator:
             success = self._run_command(
                 extractor_cmd,
                 f"Extract {source_name}",
-                timeout=900,  # 15 min for extractors
+                timeout=1800,  # 30 min for extractors (first run takes ~20 min, subsequent ~2 min)
                 allow_failure=True  # Continue on extractor failure
             )
             
@@ -184,7 +222,7 @@ class PipelineOrchestrator:
         
         # Summary
         successful = sum(1 for s in results.values() if s == 'success')
-        logger.info(f"\n📊 Extraction Summary: {successful}/{len(results)} sources successful")
+        logger.info(f"\nExtraction Summary: {successful}/{len(results)} sources successful")
         
         return results
     
@@ -214,7 +252,7 @@ class PipelineOrchestrator:
             processor_cmd = config.get('processor')
             
             if processor_cmd is None:
-                logger.warning(f"⚠ No processor available for {source_name}, skipping")
+                logger.warning(f" No processor available for {source_name}, skipping")
                 results[source_name] = 'no_processor'
                 continue
             
@@ -230,7 +268,7 @@ class PipelineOrchestrator:
         
         # Summary
         successful = sum(1 for s in results.values() if s == 'success')
-        logger.info(f"\n📊 Processing Summary: {successful}/{len(results)} sources successful")
+        logger.info(f"\nProcessing Summary: {successful}/{len(results)} sources successful")
         
         return results
     
@@ -246,7 +284,7 @@ class PipelineOrchestrator:
         logger.info("=" * 70)
         
         # Generate Gold layer
-        logger.info("\n1️⃣ Generating unified dataset + aggregates...")
+        logger.info("\nGenerating unified dataset + aggregates...")
         success = self._run_command(
             ['python3', '-m', 'src.gold_layer.main', '--all'],
             'Generate Gold Layer',
@@ -261,7 +299,7 @@ class PipelineOrchestrator:
             return False
         
         # Upload to MinIO
-        logger.info("\n2️⃣ Uploading to MinIO...")
+        logger.info("\nUploading to MinIO...")
         upload_success = self._run_command(
             ['python3', '-m', 'src.gold_layer.upload_to_minio'],
             'Upload to MinIO',
@@ -281,38 +319,38 @@ class PipelineOrchestrator:
         logger.info(" PIPELINE EXECUTION REPORT")
         logger.info("=" * 70)
         
-        logger.info(f"\n⏱️  Total Duration: {duration:.1f}s ({duration/60:.1f} min)")
+        logger.info(f"\n  Total Duration: {duration:.1f}s ({duration/60:.1f} min)")
         
         # Extractors
         if self.stats['extractors']:
-            logger.info("\n📥 Extractors:")
+            logger.info("\nExtractors:")
             for name, status in self.stats['extractors'].items():
-                symbol = "✓" if status == 'success' else "✗" if status == 'failed' else "⊘"
+                symbol = "" if status == 'success' else "" if status == 'failed' else "⊘"
                 logger.info(f"  {symbol} {name}: {status}")
         
         # Processors
         if self.stats['processors']:
-            logger.info("\n⚙️  Processors:")
+            logger.info("\nProcessors:")
             for name, status in self.stats['processors'].items():
-                symbol = "✓" if status == 'success' else "✗" if status == 'failed' else "⊘"
+                symbol = "" if status == 'success' else "" if status == 'failed' else "⊘"
                 logger.info(f"  {symbol} {name}: {status}")
         
         # Gold layer
         if self.stats['gold_layer']:
-            logger.info("\n🥇 Gold Layer:")
+            logger.info("\nGold Layer:")
             for phase, status in self.stats['gold_layer'].items():
-                symbol = "✓" if status == 'success' else "✗"
+                symbol = "" if status == 'success' else ""
                 logger.info(f"  {symbol} {phase}: {status}")
         
         # Warnings
         if self.stats['warnings']:
-            logger.info(f"\n⚠️  Warnings ({len(self.stats['warnings'])}):")
+            logger.info(f"\nWarnings ({len(self.stats['warnings'])}):")
             for warning in self.stats['warnings'][:5]:  # Show first 5
                 logger.info(f"  • {warning['task']}: {warning['error'][:80]}...")
         
         # Errors
         if self.stats['errors']:
-            logger.info(f"\n❌ Errors ({len(self.stats['errors'])}):")
+            logger.info(f"\nErrors ({len(self.stats['errors'])}):")
             for error in self.stats['errors'][:5]:  # Show first 5
                 logger.info(f"  • {error['task']}: {error['error'][:80]}...")
         
@@ -322,13 +360,13 @@ class PipelineOrchestrator:
         # Final status
         logger.info("\n" + "=" * 70)
         if self.stats['errors']:
-            logger.warning("⚠️  Pipeline completed WITH ERRORS")
+            logger.warning("Pipeline completed WITH ERRORS")
             return False
         elif self.stats['warnings']:
-            logger.info("✓ Pipeline completed with warnings")
+            logger.info(" Pipeline completed with warnings")
             return True
         else:
-            logger.info("✓ Pipeline completed SUCCESSFULLY")
+            logger.info(" Pipeline completed SUCCESSFULLY")
             return True
     
     def _save_report(self, duration: float):
@@ -365,7 +403,7 @@ class PipelineOrchestrator:
                 for error in self.stats['errors']:
                     f.write(f"  - {error['task']}: {error['error']}\n")
         
-        logger.info(f"\n📄 Detailed report saved to: {report_path}")
+        logger.info(f"\nDetailed report saved to: {report_path}")
     
     def run_full_pipeline(self, sources: Optional[List[str]] = None):
         """
@@ -473,11 +511,11 @@ Examples:
         sys.exit(0 if success else 1)
         
     except KeyboardInterrupt:
-        logger.warning("\n\n⚠️  Pipeline interrupted by user")
+        logger.warning("\n\nPipeline interrupted by user")
         orchestrator.generate_report()
         sys.exit(130)
     except Exception as e:
-        logger.error(f"\n\n❌ Unexpected error: {e}")
+        logger.error(f"\n\nUnexpected error: {e}")
         import traceback
         traceback.print_exc()
         orchestrator.generate_report()
