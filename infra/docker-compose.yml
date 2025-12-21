@@ -65,6 +65,35 @@ services:
       retries: 5
       start_period: 60s
 
+  # NLP Chatbot API - Natural language query interface
+  chatbot-api:
+    build:
+      context: ..
+      dockerfile: infra/dockerfile/chatbot-api/Dockerfile
+    container_name: sod-chatbot-api
+    ports:
+      - "8000:8000"  # FastAPI server
+    env_file:
+      - .env
+    environment:
+      # Override for internal Docker network
+      DREMIO_HOST: dremio
+    volumes:
+      # Mount source code for development
+      - ../src:/app/src:ro
+    networks:
+      - sod-network
+    depends_on:
+      dremio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s  # Gemini API initialization is fast
+    restart: unless-stopped
+
 networks:
   sod-network:
     driver: bridge

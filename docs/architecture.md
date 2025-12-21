@@ -95,9 +95,8 @@ The E-Procurement Data Pipeline is built using a **medallion architecture** (Bro
                          ↓
          ┌───────────────────────────────┐
          │   APPLICATION LAYER           │
-         │  • API (Planned)              │
+         │  • NLP Chatbot API            │
          │  • Frontend (Planned)         │
-         │  • Chatbot (Planned)          │
          └───────────────────────────────┘
 ```
 
@@ -351,6 +350,17 @@ services:
       - "32010:32010" # Arrow Flight
     volumes:
       - dremio_data:/opt/dremio/data
+
+  chatbot-api:
+    build:
+      context: ..
+      dockerfile: infra/dockerfile/chatbot-api/Dockerfile
+    ports:
+      - "8000:8000"  # FastAPI server
+    env_file:
+      - .env
+    depends_on:
+      - dremio
 ```
 
 ### MinIO Configuration
@@ -694,6 +704,7 @@ LIMIT 100;
 - [Data Sources - European](data_sources_european.md)
 - [Data Sources - Portugal](data_sources_portugal.md)
 - [Development Guide](development_guide.md)
+- [NLP Chatbot Implementation](chatbot.md) - Natural language query interface
 
 ---
 

@@ -55,12 +55,22 @@ help:
 	@echo "  make dremio-setup        - Configure Dremio connection"
 	@echo "  make dremio-status       - Check Dremio status"
 	@echo ""
+	@echo "NLP Chatbot API:"
+	@echo "  make chatbot-logs        - View chatbot API logs"
+	@echo "  make chatbot-restart     - Restart chatbot service"
+	@echo "  make chatbot-rebuild     - Rebuild chatbot container"
+	@echo "  make chatbot-shell       - Open shell in chatbot container"
+	@echo ""
 	@echo "Cleanup:"
 	@echo "  make clean               - Remove all containers and volumes (destructive!)"
 	@echo ""
 	@echo "Services available at:"
 	@echo "  - MinIO Console: http://localhost:9001 (minioadmin/minioadmin)"
 	@echo "  - Dremio UI:     http://localhost:9047"
+	@echo "  - Chatbot API:   http://localhost:8000/docs"
+	@echo ""
+	@echo "Note: Ensure GEMINI_API_KEY is set in infra/.env"
+	@echo "      Get your free key at: https://ai.google.dev/"
 	@echo ""
 
 install:
@@ -68,7 +78,7 @@ install:
 	@test -d $(VENV) || python3 -m venv $(VENV)
 	@echo "Installing dependencies..."
 	@$(PIP) install --upgrade pip
-	@$(PIP) install -r requirements.txt
+	@$(PIP) install -r infra/requirements.txt
 	@echo ""
 	@echo "✓ Virtual environment created and dependencies installed"
 	@echo ""
@@ -93,9 +103,11 @@ up:
 	@echo "Access points:"
 	@echo "  - MinIO Console: http://localhost:9001"
 	@echo "  - Dremio UI:     http://localhost:9047"
+	@echo "  - Chatbot API:   http://localhost:8000/docs"
 	@echo ""
 	@echo "Next: Run 'make extract' to extract data"
-	@echo "Run 'make logs' to view logs"
+	@echo "      Run 'make chatbot-test' to test chatbot API"
+	@echo "      Run 'make logs' to view all logs"
 
 down:
 	@echo "Stopping all Docker services..."
@@ -431,3 +443,75 @@ clean:
 	@echo "Deleting all data and volumes!"
 	cd infra && docker compose down -v
 	@echo "All containers and volumes removed"
+
+# ===================================================
+# NLP Chatbot API Targets (Docker-integrated)
+# ===================================================
+
+chatbot-logs:
+	@echo "Showing chatbot API logs (Ctrl+C to exit)..."
+	@echo ""
+	cd infra && docker compose logs -f chatbot-api
+
+chatbot-restart:
+	@echo "Restarting chatbot API service..."
+	cd infra && docker compose restart chatbot-api
+	@echo "✓ Chatbot API restarted"
+	@echo "View logs with: make chatbot-logs"
+
+chatbot-rebuild:
+	@echo "Rebuilding chatbot API container..."
+	cd infra && docker compose up -d --build chatbot-api
+	@echo "✓ Chatbot API rebuilt and restarted"
+	@echo "View logs with: make chatbot-logs"
+
+chatbot-shell:
+	@echo "Opening shell in chatbot API container..."
+	cd infra && docker compose exec chatbot-api /bin/bash
+
+chatbot-test:
+	@echo "Testing NLP Chatbot API..."
+	@echo ""
+	@echo "1. Testing health endpoint..."
+	@curl -s http://localhost:8000/api/health 2>/dev/null | python3 -m json.tool || echo "⚠️  API not responding. Check: make chatbot-logs"
+	@echo ""
+	@echo "2. Testing schema endpoint..."
+	@curl -s http://localhost:8000/api/schema 2>/dev/null | python3 -m json.tool | head -30 || true
+	@echo ""
+	@echo "For full API docs, visit: http://localhost:8000/docs"
+	@echo "Run 'make chatbot-test-query' to test SQL generation"
+	@echo "Run 'make chatbot-test-analytics' to test analytics (requires Dremio)"
+	@echo ""
+
+chatbot-test-query:
+	@echo "Testing Query Creator Bot (SQL Generation)..."
+	@echo ""
+	@echo "Sending natural language query: 'Show me the top 10 countries by number of tenders'"
+	@echo ""
+	@curl -s -X POST http://localhost:8000/api/chat/query-creator \
+		-H "Content-Type: application/json" \
+		-d '{"message": "Show me the top 10 countries by number of tenders", "include_explanation": true}' \
+		2>/dev/null | python3 -m json.tool || echo "⚠️  Query Creator test failed. Check: make chatbot-logs"
+	@echo ""
+
+chatbot-test-analytics:
+	@echo "Testing Analytics Bot (Query Execution + Insights)..."
+	@echo ""
+	@echo "Executing sample SQL query and generating insights..."
+	@echo ""
+	@curl -s -X POST http://localhost:8000/api/chat/analytics \
+		-H "Content-Type: application/json" \
+		-d '{"sql": "SELECT source_country, COUNT(*) as tender_count FROM minio.gold.unified GROUP BY source_country ORDER BY tender_count DESC LIMIT 5", "message": "Focus on top countries and trends", "include_visualizations": true}' \
+		2>/dev/null | python3 -m json.tool || echo "⚠️  Analytics test failed. Dremio may not be connected. Check: make chatbot-logs"
+	@echo ""
+
+chatbot-test-all:
+	@echo "Running comprehensive chatbot tests..."
+	@echo ""
+	$(MAKE) chatbot-test
+	@echo ""
+	$(MAKE) chatbot-test-query
+	@echo ""
+	$(MAKE) chatbot-test-analytics
+
+.PHONY: chatbot-logs chatbot-restart chatbot-rebuild chatbot-shell chatbot-test chatbot-test-query chatbot-test-analytics chatbot-test-all

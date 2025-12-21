@@ -1,0 +1,38 @@
+# E-Procurement System Requirements
+
+# Data extraction
+requests>=2.31.0
+
+# Data processing
+pandas>=2.0.0
+pyarrow>=12.0.0
+
+# Object storage (MinIO/S3)
+minio>=7.2.0
+boto3>=1.34.0
+
+# Configuration
+python-dotenv>=1.0.0
+
+# Dremio integration
+pyarrow>=12.0.0
+
+# Excel file handling
+openpyxl>=3.1.0
+
+# ===== NLP Chatbot System =====
+
+# FastAPI Web Framework
+fastapi==0.109.0
+uvicorn[standard]==0.27.0
+pydantic==2.6.0
+pydantic-settings==2.1.0
+
+# Gemini API (for both Query Creator and Analytics Bots)
+google-generativeai==0.7.2
+
+# SQL parsing and validation
+sqlparse==0.4.4
+
+# Utilities
+httpx==0.26.0
