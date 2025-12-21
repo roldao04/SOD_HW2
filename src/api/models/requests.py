@@ -158,3 +158,42 @@ class ValidateSQLRequest(BaseModel):
                 "sql": "SELECT source_country, COUNT(*) FROM minio.gold.unified GROUP BY source_country;"
             }
         }
+
+
+class UnifiedChatRequest(BaseModel):
+    """Request model for unified chat endpoint (full flow)."""
+
+    message: str = Field(
+        ...,
+        description="Natural language question",
+        min_length=3,
+        max_length=500,
+        examples=["What are the top 10 countries by tender count?"]
+    )
+
+    include_explanation: bool = Field(
+        default=True,
+        description="Include SQL explanation in response"
+    )
+
+    include_visualizations: bool = Field(
+        default=True,
+        description="Include visualization suggestions"
+    )
+
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        description="Maximum SQL generation attempts"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "message": "What are the total contract values by country?",
+                "include_explanation": True,
+                "include_visualizations": True,
+                "max_attempts": 3
+            }
+        }

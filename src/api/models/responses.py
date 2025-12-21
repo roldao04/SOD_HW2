@@ -240,3 +240,83 @@ class ErrorResponse(BaseModel):
         default_factory=lambda: datetime.now().isoformat(),
         description="Error timestamp"
     )
+
+
+class UnifiedChatResponse(BaseModel):
+    """Response model for unified chat endpoint."""
+
+    success: bool = Field(..., description="Whether the request succeeded")
+
+    # Query generation
+    sql: Optional[str] = Field(
+        default=None,
+        description="Generated SQL query"
+    )
+
+    sql_explanation: Optional[str] = Field(
+        default=None,
+        description="Explanation of the SQL query"
+    )
+
+    confidence: Optional[float] = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="SQL generation confidence score"
+    )
+
+    # Query execution
+    results: Optional[QueryExecutionResponse] = Field(
+        default=None,
+        description="Query execution results"
+    )
+
+    # Analytics
+    insights: Optional[InsightsResponse] = Field(
+        default=None,
+        description="AI-generated insights"
+    )
+
+    visualizations: List[VisualizationSuggestion] = Field(
+        default_factory=list,
+        description="Visualization suggestions"
+    )
+
+    # Metadata
+    execution_time: float = Field(
+        default=0.0,
+        description="Total execution time in seconds"
+    )
+
+    error: Optional[str] = Field(
+        default=None,
+        description="Error message if request failed"
+    )
+
+    hints: List[str] = Field(
+        default_factory=list,
+        description="Domain hints and suggestions"
+    )
+
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "success": True,
+                "sql": "SELECT source_country, COUNT(*) as count FROM minio.gold.unified GROUP BY source_country ORDER BY count DESC LIMIT 10;",
+                "sql_explanation": "This query counts tenders by country, sorted by count in descending order, limited to top 10.",
+                "confidence": 0.95,
+                "results": {
+                    "success": True,
+                    "data": [{"source_country": "PT", "count": 1500}],
+                    "columns": ["source_country", "count"],
+                    "row_count": 10,
+                    "execution_time": 0.5
+                },
+                "insights": {
+                    "summary": "Portugal has the highest number of tenders.",
+                    "key_insights": ["Portugal leads with 1500 tenders"]
+                },
+                "visualizations": [],
+                "execution_time": 1.2
+            }
+        }

@@ -10,13 +10,15 @@ from src.api.models.requests import (
     AnalyticsRequest,
     ExecuteSQLRequest,
     RefineQueryRequest,
-    ValidateSQLRequest
+    ValidateSQLRequest,
+    UnifiedChatRequest
 )
 from src.api.models.responses import (
     QueryCreatorResponse,
     AnalyticsResponse,
     QueryExecutionResponse,
-    ErrorResponse
+    ErrorResponse,
+    UnifiedChatResponse
 )
 from src.api.dependencies import (
     get_query_creator_bot,
@@ -233,3 +235,158 @@ async def validate_sql(
             status_code=500,
             detail=f"Internal server error: {str(e)}"
         )
+
+
+@router.post(
+    "/chat/ask",
+    response_model=UnifiedChatResponse,
+    summary="Unified chat endpoint (full flow)",
+    description="Natural language question -> SQL generation -> Execution -> AI insights (all in one)"
+)
+async def unified_chat(
+    request: UnifiedChatRequest,
+    query_bot = Depends(get_query_creator_bot),
+    analytics_bot = Depends(get_analytics_bot)
+):
+    """
+    Unified endpoint that handles the complete flow:
+    1. Generate SQL from natural language question
+    2. Execute the SQL query on Dremio
+    3. Generate AI-powered insights and analysis
+    4. Return everything in a single response
+
+    This is the main endpoint for the frontend chatbot interface.
+
+    Returns:
+        UnifiedChatResponse with SQL, results, and insights
+    """
+    import time
+    import re
+    from src.api.dependencies import get_schema_inspector
+
+    start_time = time.time()
+    MAX_RETRIES = 2  # Max retries for schema-related errors
+
+    try:
+        logger.info(f"Unified chat request: {request.message}")
+
+        for attempt in range(MAX_RETRIES):
+            # Step 1: Generate SQL from natural language
+            logger.info(f"Step 1: Generating SQL query (attempt {attempt + 1}/{MAX_RETRIES})...")
+            sql_result = query_bot.generate_sql(
+                user_query=request.message,
+                include_explanation=request.include_explanation,
+                max_attempts=request.max_attempts
+            )
+
+            if not sql_result["success"]:
+                # Failed to generate SQL
+                logger.error(f"SQL generation failed: {sql_result.get('error')}")
+                return UnifiedChatResponse(
+                    success=False,
+                    error=_create_user_friendly_error("generate SQL", sql_result.get("error")),
+                    hints=sql_result.get("hints", []),
+                    execution_time=time.time() - start_time
+                )
+
+            sql = sql_result["sql"]
+            logger.info(f"SQL generated successfully: {sql[:100]}...")
+
+            # Step 2: Execute SQL and generate insights
+            logger.info("Step 2: Executing query and generating insights...")
+            analytics_result = analytics_bot.analyze_query(
+                user_query=request.message,
+                sql=sql,
+                include_visualizations=request.include_visualizations
+            )
+
+            if not analytics_result["success"]:
+                error_msg = analytics_result.get("error", "")
+
+                # Check if it's a column/schema error
+                is_schema_error = any(keyword in error_msg.lower() for keyword in
+                    ["column", "not found", "table", "does not exist"])
+
+                if is_schema_error and attempt < MAX_RETRIES - 1:
+                    # Schema error - refresh schema and retry
+                    logger.warning(f"Schema error detected: {error_msg}. Refreshing schema and retrying...")
+                    schema_inspector = get_schema_inspector()
+                    schema_inspector.refresh_schema(force=True)
+                    continue  # Retry with fresh schema
+
+                # Non-schema error or last attempt - return error with helpful message
+                logger.error(f"Analytics failed: {error_msg}")
+
+                # Try to extract column name from error
+                column_match = re.search(r"Column '(\w+)' not found", error_msg)
+                helpful_hints = sql_result.get("hints", [])
+
+                if column_match:
+                    missing_column = column_match.group(1)
+                    helpful_hints.append(f"The column '{missing_column}' doesn't exist in the database")
+
+                    # Get available columns from schema
+                    schema_inspector = get_schema_inspector()
+                    table_info = schema_inspector.get_table("minio.gold.unified")
+                    if table_info:
+                        available_cols = [col.name for col in table_info.columns[:10]]
+                        helpful_hints.append(f"Available columns include: {', '.join(available_cols)}")
+
+                return UnifiedChatResponse(
+                    success=False,
+                    sql=sql,
+                    sql_explanation=sql_result.get("explanation"),
+                    confidence=sql_result.get("confidence"),
+                    error=_create_user_friendly_error("execute the query", error_msg),
+                    hints=helpful_hints,
+                    execution_time=time.time() - start_time
+                )
+
+            # Step 3: Build successful response
+            logger.info("Query completed successfully")
+
+            response = UnifiedChatResponse(
+                success=True,
+                sql=sql,
+                sql_explanation=sql_result.get("explanation"),
+                confidence=sql_result.get("confidence"),
+                results=analytics_result.get("results"),
+                insights=analytics_result.get("insights"),
+                visualizations=analytics_result.get("visualizations", []),
+                hints=sql_result.get("hints", []),
+                execution_time=time.time() - start_time
+            )
+
+            return response
+
+    except Exception as e:
+        logger.error(f"Error in unified_chat: {e}", exc_info=True)
+        return UnifiedChatResponse(
+            success=False,
+            error=_create_user_friendly_error("process your request", str(e)),
+            execution_time=time.time() - start_time
+        )
+
+
+def _create_user_friendly_error(action: str, technical_error: str) -> str:
+    """
+    Convert technical errors to user-friendly messages.
+
+    Args:
+        action: What we were trying to do (e.g., "execute the query")
+        technical_error: Technical error message
+
+    Returns:
+        User-friendly error message
+    """
+    if "column" in technical_error.lower() and "not found" in technical_error.lower():
+        return f"I tried to {action}, but used a column name that doesn't exist in the database. Let me try rephrasing your question with the correct column names."
+    elif "table" in technical_error.lower() and "not found" in technical_error.lower():
+        return f"I couldn't {action} because the table doesn't exist. Please make sure your data has been loaded into the database."
+    elif "connection" in technical_error.lower() or "timeout" in technical_error.lower():
+        return f"I couldn't {action} due to a database connection issue. Please try again in a moment."
+    elif "permission" in technical_error.lower() or "denied" in technical_error.lower():
+        return f"I don't have permission to {action}. Please contact your administrator."
+    else:
+        # Generic friendly message
+        return f"I encountered an error trying to {action}: {technical_error[:200]}"

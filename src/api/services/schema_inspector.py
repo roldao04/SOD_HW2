@@ -156,13 +156,34 @@ class SchemaInspector:
 
             if sample_result["success"] and sample_result["data"]:
                 import pandas as pd
+                import numpy as np
                 df = pd.DataFrame(sample_result["data"])
 
                 for col in columns:
                     if col.name in df.columns:
-                        # Get unique non-null values
-                        unique_vals = df[col.name].dropna().unique()[:5].tolist()
-                        col.sample_values = [str(v) for v in unique_vals]
+                        try:
+                            # Get unique non-null values
+                            # Skip ARRAY columns or other unhashable types
+                            if col.data_type.upper() == 'ARRAY':
+                                col.sample_values = ["[array]"]
+                                continue
+
+                            # Filter out None/NaN values
+                            non_null = df[col.name].dropna()
+                            if len(non_null) == 0:
+                                continue
+
+                            # Try to get unique values, handle unhashable types
+                            try:
+                                unique_vals = non_null.unique()[:5].tolist()
+                                col.sample_values = [str(v) for v in unique_vals if v is not None]
+                            except (TypeError, np.core._exceptions._UFuncNoLoopError):
+                                # Column contains unhashable types (arrays, dicts, etc.)
+                                col.sample_values = [str(non_null.iloc[0])][:50]  # Just take first value
+
+                        except Exception as e:
+                            logger.debug(f"Could not get sample values for column {col.name}: {e}")
+                            continue
 
             # Get row count (approximate)
             count_result = self.dremio.execute_query(

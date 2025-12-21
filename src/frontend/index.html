@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Procurement Data Chatbot</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>E-Procurement Data Chatbot</h1>
+            <p class="subtitle">Ask questions about European procurement data in natural language</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Chat History -->
+            <div id="chatHistory" class="chat-history">
+                <div class="welcome-message">
+                    <h2>Welcome!</h2>
+                    <p>Ask me anything about procurement data. For example:</p>
+                    <ul class="example-questions">
+                        <li onclick="useExample(this)">What are the top 10 countries by number of tenders?</li>
+                        <li onclick="useExample(this)">Show me total contract values by country for 2024</li>
+                        <li onclick="useExample(this)">Which organizations have the most contracts?</li>
+                        <li onclick="useExample(this)">What is the average contract value in Portugal?</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-container">
+                <form id="chatForm" onsubmit="sendMessage(event)">
+                    <div class="input-wrapper">
+                        <textarea
+                            id="userInput"
+                            placeholder="Ask a question about procurement data..."
+                            rows="3"
+                            maxlength="500"
+                            required
+                        ></textarea>
+                        <button type="submit" id="sendButton" class="send-button">
+                            <span id="buttonText">Send</span>
+                            <span id="buttonLoader" class="loader" style="display: none;"></span>
+                        </button>
+                    </div>
+                    <div class="input-footer">
+                        <span class="char-count"><span id="charCount">0</span>/500</span>
+                    </div>
+                </form>
+            </div>
+        </main>
+
+        <!-- API Status -->
+        <div id="apiStatus" class="api-status"></div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

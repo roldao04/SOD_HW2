@@ -52,6 +52,18 @@ async def lifespan(app: FastAPI):
         else:
             logger.warning("Dremio connection failed - some features may not work")
 
+        # Load database schema into cache
+        logger.info("Loading database schema...")
+        from src.api.dependencies import get_schema_inspector
+        schema_inspector = get_schema_inspector()
+        schema_inspector.refresh_schema(force=True)
+
+        # Log schema statistics
+        all_tables = schema_inspector.get_all_tables()
+        logger.info(f"Schema loaded: {len(all_tables)} tables found")
+        for table in all_tables:
+            logger.info(f"  - {table.full_name}: {len(table.columns)} columns, ~{table.row_count or 0} rows")
+
     except Exception as e:
         logger.error(f"Error during startup: {e}")
         # Continue anyway - some features might still work
