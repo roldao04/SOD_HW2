@@ -347,7 +347,7 @@ An incremental extraction strategy was implemented to minimize redundant data tr
 
 Field completeness analysis revealed strong coverage for tender metadata (title, buyer, publication date) with over 95% population rates, but lower completeness for award-stage data (supplier names, contract values) at approximately 60-70%. The Portuguese language procurement categories required standardization mapping to English equivalents during Silver layer processing.
 
-## 4.4 TED (Tenders Electronic Daily)
+## 4.4 TED (Tenders Electronic Daily) (André & Abel)
 
 Tenders Electronic Daily (TED) is the official publication portal for European public procurement notices, operated by the Publications Office of the European Union. TED publishes procurement opportunities exceeding EU threshold values (generally €140,000 for supplies/services, €5.35 million for works), providing EU-wide visibility for cross-border tender opportunities.
 
